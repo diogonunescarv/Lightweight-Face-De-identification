@@ -73,46 +73,52 @@ Todos os argumentos estão descritos abaixo.
 
 ### Flags principais
 
-- `--data`: obrigatório. Pasta com as imagens de treino.
-- `--out`: obrigatório. Pasta onde serão salvos os checkpoints, logs e previews.
-- `--device`: padrão `cpu`. Pode ser `cpu` ou `cuda` (se disponível).
-- `--image-size`: padrão `224`. Tamanho das imagens (largura=altura).
-- `--batch-size`: padrão `8`. Tamanho do batch.
-- `--num-workers`: padrão `0`. Número de subprocessos para carregar dados.
-- `--steps`: padrão `2000`. Número total de iterações (passos) de treinamento.
-- `--lr`: padrão `0.001`. Taxa de aprendizado inicial (para Adam).
-- `--lr-scheduler`: padrão `none`. Tipo de agendador: `none`, `cosine`, `step`, `onecycle`.
-- `--lr-warmup-steps`: padrão `0`. Passos de warmup linear (aumenta LR de 0 até `--lr`).
-- `--lr-eta-min`: padrão `0.0`. LR mínimo para o scheduler `cosine`.
-- `--lr-step-size`: padrão `500`. Intervalo (passos) para redução no scheduler `step`.
-- `--lr-gamma`: padrão `0.5`. Fator de multiplicação no scheduler `step`.
-- `--log-every`: padrão `25`. A cada N passos, exibe e salva métricas.
-- `--preview-every`: padrão `100`. A cada N passos, salva uma imagem comparativa (original vs transformada).
-- `--save-every`: padrão `500`. A cada N passos, salva um checkpoint do modelo.
+| Flag | Padrão | Descrição |
+|------|--------|------------|
+| `--data` | obrigatório | Pasta com as imagens de treino. |
+| `--out` | obrigatório | Pasta onde serão salvos os checkpoints, logs e previews. |
+| `--device` | `cpu` | `cpu` ou `cuda` (se disponível). |
+| `--image-size` | `224` | Tamanho das imagens (largura=altura). |
+| `--batch-size` | `8` | Tamanho do batch. |
+| `--num-workers` | `0` | Número de subprocessos para carregar dados. |
+| `--steps` | `2000` | Número total de iterações (passos) de treinamento. |
+| `--lr` | `0.001` | Taxa de aprendizado inicial (para Adam). |
+| `--lr-scheduler` | `none` | Tipo de agendador: `none`, `cosine`, `step`, `onecycle`. |
+| `--lr-warmup-steps` | `0` | Passos de warmup linear (aumenta LR de 0 até `--lr`). |
+| `--lr-eta-min` | `0.0` | LR mínimo para o scheduler `cosine`. |
+| `--lr-step-size` | `500` | Intervalo (passos) para redução no scheduler `step`. |
+| `--lr-gamma` | `0.5` | Fator de multiplicação no scheduler `step`. |
+| `--log-every` | `25` | A cada N passos, exibe e salva métricas. |
+| `--preview-every` | `100` | A cada N passos, salva uma imagem comparativa (original vs transformada). |
+| `--save-every` | `500` | A cada N passos, salva um checkpoint do modelo. |
 
 ### Flags de regularização e qualidade
 
-- `--target-cos`: padrão `0.25`. Similaridade cosseno alvo para a perda de identidade (quanto menor, mais agressiva a desidentificação).
-- `--tau-ssim`: padrão `0.95`. Limiar de SSIM abaixo do qual aplicamos penalidade.
-- `--lambda-id`: padrão `1.0`. Peso da perda de identidade.
-- `--lambda-ssim`: padrão `20.0`. Peso da perda de similaridade estrutural (SSIM).
-- `--lambda-pixel`: padrão `2.0`. Peso da perda L2 entre original e transformada.
-- `--lambda-tv`: padrão `0.2`. Peso da perda de variação total (suavidade).
-- `--lambda-flow-smooth`: padrão `5.0`. Peso da regularização do fluxo geométrico.
-- `--lambda-dct-l2`: padrão `0.01`. Regularização da magnitude dos coeficientes DCT.
-- `--lambda-photo-l2`: padrão `0.01`. Regularização da magnitude do ajuste fotométrico.
+| Flag | Padrão | Descrição |
+|------|--------|-----------|
+| `--target-cos` | `0.25` | Similaridade cosseno alvo para a perda de identidade (quanto menor, mais agressiva a desidentificação). |
+| `--tau-ssim` | `0.95` | Limiar de SSIM abaixo do qual aplicamos penalidade. |
+| `--lambda-id` | `1.0` | Peso da perda de identidade. |
+| `--lambda-ssim` | `20.0` | Peso da perda de similaridade estrutural (SSIM). |
+| `--lambda-pixel` | `2.0` | Peso da perda L2 entre original e transformada. |
+| `--lambda-tv` | `0.2` | Peso da perda de variação total (suavidade). |
+| `--lambda-flow-smooth` | `5.0` | Peso da regularização do fluxo geométrico. |
+| `--lambda-dct-l2` | `0.01` | Regularização da magnitude dos coeficientes DCT. |
+| `--lambda-photo-l2` | `0.01` | Regularização da magnitude do ajuste fotométrico. |
 
 ### Flags da transformação
 
-- `--dct-k`: padrão `32`. Resolução da grade DCT (base de frequência).
-- `--dct-fmin`: padrão `2`. Frequência mínima a ser perturbada (exclui DC).
-- `--dct-fmax`: padrão `18`. Frequência máxima a ser perturbada.
-- `--flow-grid`: padrão `12`. Resolução do campo de fluxo (baixa resolução).
-- `--photo-grid`: padrão `12`. Resolução do ajuste fotométrico local.
-- `--max-dct-amp`: padrão `0.035`. Amplitude máxima da perturbação DCT (em escala de pixel).
-- `--max-flow-px`: padrão `2.0`. Deslocamento máximo em pixels para o fluxo.
-- `--max-photo-amp`: padrão `0.035`. Amplitude máxima do ajuste fotométrico.
-- `--no-face-mask`: (não ativado por padrão). Se ativado, desabilita a máscara elíptica (a transformação afeta toda a imagem).
+| Flag | Padrão | Descrição |
+|------|--------|-----------|
+| `--dct-k` | `32` | Resolução da grade DCT (base de frequência). |
+| `--dct-fmin` | `2` | Frequência mínima a ser perturbada (exclui DC). |
+| `--dct-fmax` | `18` | Frequência máxima a ser perturbada. |
+| `--flow-grid` | `12` | Resolução do campo de fluxo (baixa resolução). |
+| `--photo-grid` | `12` | Resolução do ajuste fotométrico local. |
+| `--max-dct-amp` | `0.035` | Amplitude máxima da perturbação DCT (em escala de pixel). |
+| `--max-flow-px` | `2.0` | Deslocamento máximo em pixels para o fluxo. |
+| `--max-photo-amp` | `0.035` | Amplitude máxima do ajuste fotométrico. |
+| `--no-face-mask` | (não ativado) | Se ativado, desabilita a máscara elíptica (a transformação afeta toda a imagem). |
 
 ### Flags do agendador de taxa de aprendizado (scheduler)
 
@@ -182,13 +188,15 @@ python deid_optimize.py apply \
 
 Argumentos do modo `apply`:
 
-- `--checkpoint`: obrigatório. Caminho do `.pt` gerado no treinamento.
-- `--input`: obrigatório. Pasta com imagens a serem transformadas.
-- `--output`: obrigatório. Pasta de destino (será criada).
-- `--device`: padrão `cpu`. `cpu` ou `cuda`.
-- `--image-size`: padrão `224`. Redimensionar imagens para esse tamanho antes da transformação.
-- `--batch-size`: padrão `8`. Tamanho do batch (processamento em lote).
-- `--num-workers`: padrão `0`. Número de workers para carregamento.
+| Flag | Padrão | Descrição |
+|------|--------|-----------|
+| `--checkpoint` | obrigatório | Caminho do `.pt` gerado no treinamento. |
+| `--input` | obrigatório | Pasta com imagens a serem transformadas. |
+| `--output` | obrigatório | Pasta de destino (será criada). |
+| `--device` | `cpu` | `cpu` ou `cuda`. |
+| `--image-size` | `224` | Redimensionar imagens para esse tamanho antes da transformação. |
+| `--batch-size` | `8` | Tamanho do batch (processamento em lote). |
+| `--num-workers` | `0` | Número de workers para carregamento. |
 
 O script processa todas as imagens suportadas (jpg, png, bmp, webp) e salva com o mesmo nome na pasta de saída. A qualidade de salvamento é 95 (JPEG).
 
