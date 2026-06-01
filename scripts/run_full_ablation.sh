@@ -7,6 +7,7 @@ CODE_DIR="/home/dcarvalho/Lightweight-Face-De-identification"
 DATA_DIR="/mnt/study-data/dcarvalho/datasets/lfw/faces_train"
 OUTPUT_BASE="/mnt/study-data/dcarvalho/ablation_tests/fixed_lr"
 STEPS=2000
+SEED=42
 
 # Navega até o código
 cd "$CODE_DIR" || exit 1
@@ -27,9 +28,9 @@ echo "Diretório de saída base: $OUTPUT_BASE"
 # Cada entrada: nome e lista de argumentos específicos
 # -------------------------------
 declare -A CONFIGS
-CONFIGS["V5_original"]="--lambda-id 4.0 --target-cos 0.15 --max-dct-amp 0.06 --max-flow-px 2.75 --max-photo-amp 0.06 --tau-ssim 0.92 --lambda-ssim 20.0 --lambda-pixel 3.0 --lr 0.008"
-CONFIGS["V10__original"]="--lambda-id 6.0 --target-cos 0.1 --max-dct-amp 0.06 --max-flow-px 2.75 --max-photo-amp 0.06 --tau-ssim 0.90 --lambda-ssim 20.0 --lambda-pixel 3.0 --lr 0.006"
-CONFIGS["V11_original"]="--lambda-id 5.0 --target-cos 0.15 --max-dct-amp 0.06 --max-flow-px 2.5 --max-photo-amp 0.06 --tau-ssim 0.92 --lambda-ssim 20.0 --lambda-pixel 3.0 --lr 0.008"
+CONFIGS["V5_reprod"]="--lambda-id 4.0 --target-cos 0.15 --max-dct-amp 0.06 --max-flow-px 2.75 --max-photo-amp 0.06 --tau-ssim 0.92 --lambda-ssim 20.0 --lambda-pixel 3.0 --lr 0.008"
+CONFIGS["V10_reprod"]="--lambda-id 6.0 --target-cos 0.1 --max-dct-amp 0.06 --max-flow-px 2.75 --max-photo-amp 0.06 --tau-ssim 0.90 --lambda-ssim 20.0 --lambda-pixel 3.0 --lr 0.006"
+CONFIGS["V11_reprod"]="--lambda-id 5.0 --target-cos 0.15 --max-dct-amp 0.06 --max-flow-px 2.5 --max-photo-amp 0.06 --tau-ssim 0.92 --lambda-ssim 20.0 --lambda-pixel 3.0 --lr 0.008"
 
 # -------------------------------
 # Lista de ablações: (nome, flags adicionais)
@@ -63,6 +64,7 @@ run_experiment() {
         --out "$out_dir" \
         --steps $STEPS \
         --device "$DEVICE" \
+        --seed $SEED \
         $config_args \
         $ablation_flags
 

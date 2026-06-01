@@ -37,6 +37,7 @@ import math
 from sched import scheduler
 from sched import scheduler
 import time
+import random
 from pathlib import Path
 from typing import List, Tuple
 
@@ -48,6 +49,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
+
+# ============================================================
+# Seed
+# ============================================================
+
+def set_seed(seed: int):
+    """Fixa todas as sementes para reprodutibilidade."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 # ============================================================
 # Dataset
@@ -553,6 +567,8 @@ def total_variation_loss(y: torch.Tensor) -> torch.Tensor:
 # ============================================================
 
 def train(args):
+    set_seed(args.seed)
+
     device = torch.device(args.device)
 
     out_dir = Path(args.out)
@@ -565,12 +581,24 @@ def train(args):
         f.write("step,loss,id,cos,ssim,pix,tv,elapsed,lr,euclid\n")
 
     dataset = FaceImageFolder(args.data, args.image_size)
+
+    # Gerador fixo para shuffle
+    g = torch.Generator()
+    g.manual_seed(args.seed)
+
+    def worker_init_fn(worker_id):
+        worker_seed = args.seed + worker_id
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
         drop_last=True,
+        generator=g,
+        worker_init_fn=worker_init_fn,
     )
 
     embedders = load_authorized_embedders(device)
@@ -942,6 +970,8 @@ def build_parser():
     p_train.add_argument("--disable-dct", action="store_true", help="Desabilita perturbação DCT")
     p_train.add_argument("--disable-flow", action="store_true", help="Desabilita deformação geométrica")
     p_train.add_argument("--disable-photo", action="store_true", help="Desabilita ajuste fotométrico")
+
+    p_train.add_argument("--seed", type=int, default=42, help="Semente para reprodutibilidade")
 
     # -------------------------
     # apply
