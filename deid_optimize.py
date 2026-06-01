@@ -406,18 +406,28 @@ class LightweightDeIdentifier(nn.Module):
         # dct_delta = self.reconstruct_dct_delta(b, device)
         # photo_delta = self.reconstruct_photo_delta(b, device)
         # flow = self.reconstruct_flow(b, device)
+        #
+        # y = x + dct_delta
+        # y = y.clamp(0.0, 1.0)
+        #
+        # y = self.warp(y, flow)
+        #
+        # y = y + photo_delta
+        # y = y.clamp(0.0, 1.0)
+
+        y = x
 
         # DCT
         if not self.disable_dct:
             dct_delta = self.reconstruct_dct_delta(b, device)
-            y = x + dct_delta
+            y = y + dct_delta
             y = y.clamp(0.0, 1.0)
-    
+
         # Warp (flow)
         if not self.disable_flow:    
             flow = self.reconstruct_flow(b, device)
             y = self.warp(y, flow)
-
+        
         # Photo adjustment
         if not self.disable_photo:
             photo_delta = self.reconstruct_photo_delta(b, device)
