@@ -285,6 +285,9 @@ class LightweightDeIdentifier(nn.Module):
         max_flow_px: float = 2.0,
         max_photo_amp: float = 0.035,
         use_face_mask: bool = True,
+        disable_dct: bool = False,
+        disable_flow: bool = False,
+        disable_photo: bool = False,
     ):
         super().__init__()
 
@@ -299,6 +302,10 @@ class LightweightDeIdentifier(nn.Module):
         self.max_flow_px = float(max_flow_px)
         self.max_photo_amp = float(max_photo_amp)
         self.use_face_mask = bool(use_face_mask)
+
+        self.disable_dct = disable_dct
+        self.disable_flow = disable_flow
+        self.disable_photo = disable_photo
 
         # Coeficientes DCT universais por canal.
         self.raw_dct = nn.Parameter(torch.zeros(1, 3, self.dct_k, self.dct_k))
@@ -395,17 +402,27 @@ class LightweightDeIdentifier(nn.Module):
         b = x.shape[0]
         device = x.device
 
-        dct_delta = self.reconstruct_dct_delta(b, device)
-        photo_delta = self.reconstruct_photo_delta(b, device)
-        flow = self.reconstruct_flow(b, device)
+        # CÓDIGO ANTERIOR:
+        # dct_delta = self.reconstruct_dct_delta(b, device)
+        # photo_delta = self.reconstruct_photo_delta(b, device)
+        # flow = self.reconstruct_flow(b, device)
 
-        y = x + dct_delta
-        y = y.clamp(0.0, 1.0)
+        # DCT
+        if not self.disable_dct:
+            dct_delta = self.reconstruct_dct_delta(b, device)
+            y = x + dct_delta
+            y = y.clamp(0.0, 1.0)
+    
+        # Warp (flow)
+        if not self.disable_flow:    
+            flow = self.reconstruct_flow(b, device)
+            y = self.warp(y, flow)
 
-        y = self.warp(y, flow)
-
-        y = y + photo_delta
-        y = y.clamp(0.0, 1.0)
+        # Photo adjustment
+        if not self.disable_photo:
+            photo_delta = self.reconstruct_photo_delta(b, device)
+            y = y + photo_delta
+            y = y.clamp(0.0, 1.0)
 
         return y
 
@@ -533,9 +550,9 @@ def train(args):
     preview_dir = out_dir / "previews"
     preview_dir.mkdir(parents=True, exist_ok=True)
 
-    log_path = out_dir / "steps.txt"
+    log_path = out_dir / "steps.csv"
     with open(log_path, "w") as f:
-        f.write("step loss id cos ssim pix tv elapsed euclid lr\n")
+        f.write("step,loss,id,cos,ssim,pix,tv,elapsed,lr,euclid\n")
 
     dataset = FaceImageFolder(args.data, args.image_size)
     loader = DataLoader(
@@ -642,16 +659,16 @@ def train(args):
 
                 with open(log_path, "a") as f:
                     f.write(
-                        f"{step}" 
-                        f" {loss.item():.5f}" 
-                        f" {loss_id.item():.5f}" 
-                        f" {mean_cos.item():.4f}" 
-                        f" {ssim.mean().item():.4f}" 
-                        f" {loss_pix.item():.6f}" 
-                        f" {loss_tv.item():.6f}" 
-                        f" {elapsed:.1f}" 
-                        f" {current_lr:.6f}\n"
-                        f" {euclid:.4f}\n"
+                        f"{step}," 
+                        f"{loss.item():.5f}," 
+                        f"{loss_id.item():.5f}," 
+                        f"{mean_cos.item():.4f}," 
+                        f"{ssim.mean().item():.4f}," 
+                        f"{loss_pix.item():.6f}," 
+                        f"{loss_tv.item():.6f}," 
+                        f"{elapsed:.1f}," 
+                        f"{current_lr:.6f},"
+                        f"{euclid:.4f}\n"
                     )
 
                 print(
@@ -766,6 +783,78 @@ def apply_transform(args):
     elapsed = time.time() - start
     print(f"Concluído. Total: {total} imagens em {elapsed:.2f}s")
 
+@torch.no_grad()
+def evaluate(args):
+    device = torch.device(args.device)
+
+    # Carrega o transformador
+    transformer = load_transformer_from_checkpoint(args.checkpoint, device)
+    transformer.eval()
+
+    # Carrega os embedders (os mesmos usados no treino)
+    embedders = load_authorized_embedders(device)
+
+    # Dataset de validação (não o mesmo do treino)
+    dataset = FaceImageFolder(args.data, args.image_size)
+    loader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
+
+    all_cos = []
+    all_ssim = []
+    total_images = 0
+
+    for x, paths in loader:
+        x = x.to(device)
+        y = transformer(x)
+
+        # Similaridade cosseno (média sobre todos os embedders)
+        batch_cos = []
+        for model in embedders:
+            e0 = F.normalize(model(x), dim=1)
+            e1 = F.normalize(model(y), dim=1)
+            cos = (e0 * e1).sum(dim=1)      # shape [B]
+            batch_cos.append(cos)
+        # Média sobre os embedders (se mais de um)
+        mean_cos = torch.stack(batch_cos).mean(dim=0)   # [B]
+        all_cos.append(mean_cos)
+
+        # SSIM
+        ssim_vals = ssim_index(x, y)   # [B]
+        all_ssim.append(ssim_vals)
+
+        total_images += x.shape[0]
+
+    # Concatena os tensores de todos os batches
+    cos_all = torch.cat(all_cos)        # [N]
+    ssim_all = torch.cat(all_ssim)      # [N]
+
+    mean_cos = cos_all.mean().item()
+    mean_ssim = ssim_all.mean().item()
+    # Distância euclidiana média no espaço de embeddings
+    mean_euclid = math.sqrt(2.0 * (1.0 - mean_cos))
+
+    print("\n========== Evaluation Results ==========")
+    print(f"Total images evaluated: {total_images}")
+    print(f"Mean cosine similarity: {mean_cos:.4f}")
+    print(f"Mean Euclidean distance: {mean_euclid:.4f}")
+    print(f"Mean SSIM: {mean_ssim:.4f}")
+    print("========================================\n")
+
+    # Opcional: salvar os resultados em um arquivo
+    if args.output_summary:
+        out_path = Path(args.output_summary)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, 'w') as f:
+            f.write(f"images,{total_images}\n")
+            f.write(f"cos_mean,{mean_cos:.6f}\n")
+            f.write(f"euclid_mean,{mean_euclid:.6f}\n")
+            f.write(f"ssim_mean,{mean_ssim:.6f}\n")
+        print(f"Summary saved to {out_path}")
+
 
 # ============================================================
 # CLI
@@ -831,6 +920,10 @@ def build_parser():
     p_train.add_argument("--lr-gamma", type=float, default=0.5,
                         help="Fator de decaimento para StepLR")
 
+    p_train.add_argument("--disable-dct", action="store_true", help="Desabilita perturbação DCT")
+    p_train.add_argument("--disable-flow", action="store_true", help="Desabilita deformação geométrica")
+    p_train.add_argument("--disable-photo", action="store_true", help="Desabilita ajuste fotométrico")
+
     # -------------------------
     # apply
     # -------------------------
@@ -844,6 +937,20 @@ def build_parser():
     p_apply.add_argument("--batch-size", type=int, default=8)
     p_apply.add_argument("--num-workers", type=int, default=0)
 
+    # -------------------------
+    # evaluate
+    # -------------------------
+    p_evaluate = sub.add_parser("evaluate", help="Avalia um checkpoint em um conjunto de validação")
+
+    p_evaluate.add_argument("--checkpoint", required=True, help="Arquivo .pt do transformador treinado")
+    p_evaluate.add_argument("--data", required=True, help="Pasta com imagens de validação (faces)")
+    p_evaluate.add_argument("--device", default="cpu", help="cpu ou cuda")
+    p_evaluate.add_argument("--image-size", type=int, default=224)
+    p_evaluate.add_argument("--batch-size", type=int, default=8)
+    p_evaluate.add_argument("--num-workers", type=int, default=0)
+    p_evaluate.add_argument("--output-summary", type=str, default=None,
+                            help="Opcional: caminho para salvar um resumo em CSV/txt")
+
     return parser
 
 
@@ -855,6 +962,8 @@ def main():
         train(args)
     elif args.mode == "apply":
         apply_transform(args)
+    elif args.mode == "evaluate":
+        evaluate(args)
     else:
         raise RuntimeError(f"Modo desconhecido: {args.mode}")
 

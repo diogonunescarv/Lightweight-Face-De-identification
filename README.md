@@ -207,6 +207,34 @@ O script processa todas as imagens suportadas (jpg, png, bmp, webp) e salva com 
 - **Pouca desidentificação**: `cos` > 0.4 – aumente `--lambda-id`, diminua `--target-cos` ou aumente `--max-flow-px` / `--max-dct-amp`.
 - **Qualidade visual baixa**: `ssim` abaixo de 0.8 – aumente `--lambda-ssim`, `--lambda-pixel` ou reduza `--max-flow-px`, `--max-photo-amp`.
 
+## Evaluate
+
+- Carrega o transformador e os mesmos embeddings usados no treinamento (FaceNet).
+
+- Processa todas as imagens da pasta --data sem embaralhar (shuffle=False).
+
+- Para cada imagem original x e transformada y:
+
+- Calcula a similaridade cosseno entre os embeddings normalizados.
+
+- Calcula o SSIM (média dos canais).
+
+- Ao final, exibe a média da similaridade cosseno, da distância euclidiana (sqrt(2*(1-cos))) e do SSIM.
+
+- Opcionalmente salva um resumo em arquivo texto.
+
+- Essa avaliação é determinística e não envolve treinamento, permitindo comparar diferentes checkpoints (completo, sem DCT, sem flow, etc.) de forma justa.
+
+```bash
+python deid_optimize.py evaluate \
+  --checkpoint ./runs/deid_v1/transform.pt \
+  --data ./faces_val \
+  --image-size 224 \
+  --batch-size 16 \
+  --device cuda \
+  --output-summary ./runs/deid_v1/eval_results.txt
+```
+
 ## Dicas para ajuste fino
 
 1. Sempre monitore o `steps.txt`: plote as curvas de loss, cos e ssim para entender a convergência.
