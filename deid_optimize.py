@@ -576,6 +576,9 @@ def train(args):
         max_flow_px=args.max_flow_px,
         max_photo_amp=args.max_photo_amp,
         use_face_mask=not args.no_face_mask,
+        disable_dct=args.disable_dct,
+        disable_flow=args.disable_flow,
+        disable_photo=args.disable_photo,
     ).to(device)
 
     optimizer = torch.optim.Adam(transformer.parameters(), lr=args.lr)
@@ -711,6 +714,9 @@ def save_checkpoint(transformer: LightweightDeIdentifier, args, path: Path, step
         "max_photo_amp": args.max_photo_amp,
         "use_face_mask": not args.no_face_mask,
         "state_dict": transformer.state_dict(),
+        "disable_dct": args.disable_dct,
+        "disable_flow": args.disable_flow,
+        "disable_photo": args.disable_photo,
     }
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -735,6 +741,9 @@ def load_transformer_from_checkpoint(path: str | Path, device: torch.device) -> 
         max_flow_px=ckpt["max_flow_px"],
         max_photo_amp=ckpt["max_photo_amp"],
         use_face_mask=ckpt["use_face_mask"],
+        disable_dct=ckpt["disable_dct"],
+        disable_flow=ckpt["disable_flow"],
+        disable_photo=ckpt["disable_photo"],
     ).to(device)
 
     transformer.load_state_dict(ckpt["state_dict"])
