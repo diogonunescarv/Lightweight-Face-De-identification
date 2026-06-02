@@ -639,11 +639,11 @@ def train(args):
     elif args.lr_scheduler == "onecycle":
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer, max_lr=args.lr, total_steps=args.steps,
-            pct_start=warmup_steps / args.steps if warmup_steps > 0 else 0.1,
-            anneal_strategy='cos'
+            pct_start=args.onecycle_pct_start,
+            anneal_strategy=args.onecycle_anneal_strategy
         )
         print(f"Usando OneCycleLR: max_lr={args.lr}, total_steps={args.steps}, "
-              f"pct_start={warmup_steps/args.steps if warmup_steps>0 else 0.1}")
+              f"pct_start={args.onecycle_pct_start}, anneal_strategy={args.onecycle_anneal_strategy}")
     else:
         print("Usando LR fixo (sem scheduler)")
 
@@ -957,6 +957,9 @@ def build_parser():
     p_train.add_argument("--lr-scheduler", type=str, default="none",
                      choices=["none", "cosine", "step", "onecycle"],
                      help="Tipo de agendador: none (fixo), cosine, step, onecycle")
+
+    p_train.add_argument("--onecycle-pct-start", type=float, default=0.3, help="pct_start para OneCycleLR")
+    p_train.add_argument("--onecycle-anneal-strategy", type=str, default="cos", choices=["cos", "linear"])
 
     p_train.add_argument("--lr-warmup-steps", type=int, default=0,
                      help="Número de passos para warmup linear (só cosine/onecycle)")
