@@ -272,6 +272,43 @@ def ssim_index(x: torch.Tensor, y: torch.Tensor, kernel_size: int = 11, sigma: f
 
     return ssim_map.mean(dim=(1, 2, 3))
 
+def ssim_index_masked(x: torch.Tensor, y: torch.Tensor, mask: torch.Tensor, kernel_size: int = 11, sigma: float = 1.5,) -> torch.Tensor:
+    """
+    SSIM médio apenas na região indicada pela máscara.
+    x, y: [B, C, H, W] em [0,1]
+    mask: [B, 1, H, W] ou [1, 1, H, W] com valores em [0,1].
+    Retorna [B].
+    """
+    c = x.shape[1]
+    device = x.device
+    kernel = gaussian_kernel(kernel_size, sigma, c, device)
+    padding = kernel_size // 2
+
+    mu_x = F.conv2d(x, kernel, padding=padding, groups=c)
+    mu_y = F.conv2d(y, kernel, padding=padding, groups=c)
+
+    mu_x2 = mu_x * mu_x
+    mu_y2 = mu_y * mu_y
+    mu_xy = mu_x * mu_y
+
+    sigma_x2 = F.conv2d(x * x, kernel, padding=padding, groups=c) - mu_x2
+    sigma_y2 = F.conv2d(y * y, kernel, padding=padding, groups=c) - mu_y2
+    sigma_xy = F.conv2d(x * y, kernel, padding=padding, groups=c) - mu_xy
+
+    c1 = 0.01 ** 2
+    c2 = 0.03 ** 2
+
+    ssim_map = ((2 * mu_xy + c1) * (2 * sigma_xy + c2)) / (
+        (mu_x2 + mu_y2 + c1) * (sigma_x2 + sigma_y2 + c2) + 1e-8
+    )   # [B, C, H, W]
+
+    # Se a máscara não tiver o mesmo tamanho que o mapa (devido ao padding), ajuste
+    if mask.shape[-2] != ssim_map.shape[-2] or mask.shape[-1] != ssim_map.shape[-1]:
+        mask = F.interpolate(mask, size=ssim_map.shape[-2:], mode="nearest")
+
+    # Média ponderada pela máscara (por canal e depois por imagem)
+    weighted_ssim = (ssim_map * mask).sum(dim=(1, 2, 3)) / (mask.sum(dim=(1, 2, 3)) + 1e-8)
+    return weighted_ssim   # [B]
 
 # ============================================================
 # Transformador parametrizado
@@ -411,6 +448,14 @@ class LightweightDeIdentifier(nn.Module):
             padding_mode="border",
             align_corners=True,
         )
+
+    def get_face_mask(self, batch_size: int, device: torch.device) -> torch.Tensor:
+        """
+        Retorna a máscara facial elíptica (suave) para as imagens.
+        """
+
+        _, _, _, face_mask = self._get_buffers(device)
+        return face_mask.expand(batch_size, -1, -1, -1)   # [B, 1, H, W]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         b = x.shape[0]
@@ -666,8 +711,15 @@ def train(args):
                 target_cos=args.target_cos,
             )
 
-            ssim = ssim_index(x, y)
-            loss_ssim = F.relu(args.tau_ssim - ssim).mean()
+            # SSIM SEM A MASCARA
+            #ssim = ssim_index(x, y)
+            #loss_ssim = F.relu(args.tau_ssim - ssim).mean()
+
+                        # Obtém a máscara facial
+            face_mask = transformer.get_face_mask(x.shape[0], device)  # [B,1,H,W]
+            # Calcula SSIM apenas na região da face
+            ssim_vals = ssim_index_masked(x, y, face_mask)
+            loss_ssim = F.relu(args.tau_ssim - ssim_vals).mean()
 
             loss_pix = pixel_l2_loss(x, y)
             loss_tv = total_variation_loss(y)
@@ -704,7 +756,7 @@ def train(args):
                         f"{loss.item():.5f}," 
                         f"{loss_id.item():.5f}," 
                         f"{mean_cos.item():.4f}," 
-                        f"{ssim.mean().item():.4f}," 
+                        f"{ssim_vals.mean().item():.4f}," 
                         f"{loss_pix.item():.6f}," 
                         f"{loss_tv.item():.6f}," 
                         f"{elapsed:.1f}," 
@@ -718,7 +770,7 @@ def train(args):
                     f"id={loss_id.item():.5f} "
                     f"cos={mean_cos.item():.4f} "
                     f"euclid={euclid:.4f} "
-                    f"ssim={ssim.mean().item():.4f} "
+                    f"ssim={ssim_vals.mean().item():.4f} "
                     f"pix={loss_pix.item():.6f} "
                     f"tv={loss_tv.item():.6f} "
                     f"elapsed={elapsed:.1f}s "
@@ -869,8 +921,11 @@ def evaluate(args):
         mean_cos = torch.stack(batch_cos).mean(dim=0)   # [B]
         all_cos.append(mean_cos)
 
-        # SSIM
-        ssim_vals = ssim_index(x, y)   # [B]
+        # SSIM SEM MASCARA
+        #ssim_vals = ssim_index(x, y)   # [B]
+
+        face_mask = transformer.get_face_mask(x.shape[0], device)
+        ssim_vals = ssim_index_masked(x, y, face_mask)   # [B]
         all_ssim.append(ssim_vals)
 
         total_images += x.shape[0]
