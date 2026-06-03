@@ -272,7 +272,8 @@ def ssim_index(x: torch.Tensor, y: torch.Tensor, kernel_size: int = 11, sigma: f
 
     return ssim_map.mean(dim=(1, 2, 3))
 
-def ssim_index_masked(x: torch.Tensor, y: torch.Tensor, mask: torch.Tensor, kernel_size: int = 11, sigma: float = 1.5,) -> torch.Tensor:
+def ssim_index_masked(x: torch.Tensor, y: torch.Tensor, mask: torch.Tensor,
+                      kernel_size: int = 11, sigma: float = 1.5) -> torch.Tensor:
     """
     SSIM médio apenas na região indicada pela máscara.
     x, y: [B, C, H, W] em [0,1]
@@ -302,12 +303,11 @@ def ssim_index_masked(x: torch.Tensor, y: torch.Tensor, mask: torch.Tensor, kern
         (mu_x2 + mu_y2 + c1) * (sigma_x2 + sigma_y2 + c2) + 1e-8
     )   # [B, C, H, W]
 
-    # Se a máscara não tiver o mesmo tamanho que o mapa (devido ao padding), ajuste
-    if mask.shape[-2] != ssim_map.shape[-2] or mask.shape[-1] != ssim_map.shape[-1]:
-        mask = F.interpolate(mask, size=ssim_map.shape[-2:], mode="nearest")
+    # Expande a máscara para o mesmo número de canais
+    mask_expanded = mask.expand_as(ssim_map)   # [B, C, H, W]
 
-    # Média ponderada pela máscara (por canal e depois por imagem)
-    weighted_ssim = (ssim_map * mask).sum(dim=(1, 2, 3)) / (mask.sum(dim=(1, 2, 3)) + 1e-8)
+    # Média ponderada sobre todos os pixels e canais
+    weighted_ssim = (ssim_map * mask_expanded).sum(dim=(1,2,3)) / (mask_expanded.sum(dim=(1,2,3)) + 1e-8)
     return weighted_ssim   # [B]
 
 # ============================================================
