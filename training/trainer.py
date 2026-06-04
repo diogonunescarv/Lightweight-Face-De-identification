@@ -1,0 +1,216 @@
+import math
+import time
+from pathlib import Path
+import numpy as np
+import torch
+import random
+from torch.utils.data import DataLoader
+import torch.nn.functional as F
+
+from models.transformer import LightweightDeIdentifier
+from models.embedders import load_authorized_embedders
+from data.dataset import FaceImageFolder, save_preview
+from losses.losses import identity_loss_ensemble, ssim_index_masked, pixel_l2_loss, total_variation_loss
+from utils.scheduler import WarmupScheduler
+from utils.helpers import set_seed
+
+def train(args):
+    set_seed(args.seed)
+
+    device = torch.device(args.device)
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    preview_dir = out_dir / "previews"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+
+    log_path = out_dir / "steps.csv"
+    with open(log_path, "w") as f:
+        f.write("step,loss,id,cos,ssim,pix,tv,elapsed,lr,euclid\n")
+
+    dataset = FaceImageFolder(args.data, args.image_size)
+
+    # Gerador fixo para shuffle
+    g = torch.Generator()
+    g.manual_seed(args.seed)
+
+    def worker_init_fn(worker_id):
+        worker_seed = args.seed + worker_id
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+
+    loader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        drop_last=True,
+        generator=g,
+        worker_init_fn=worker_init_fn,
+    )
+
+    embedders = load_authorized_embedders(device)
+
+    transformer = LightweightDeIdentifier(
+        image_size=args.image_size,
+        dct_k=args.dct_k,
+        dct_fmin=args.dct_fmin,
+        dct_fmax=args.dct_fmax,
+        flow_grid=args.flow_grid,
+        photo_grid=args.photo_grid,
+        max_dct_amp=args.max_dct_amp,
+        max_flow_px=args.max_flow_px,
+        max_photo_amp=args.max_photo_amp,
+        use_face_mask=not args.no_face_mask,
+        disable_dct=args.disable_dct,
+        disable_flow=args.disable_flow,
+        disable_photo=args.disable_photo,
+    ).to(device)
+
+    optimizer = torch.optim.Adam(transformer.parameters(), lr=args.lr)
+
+    scheduler = None
+    warmup_steps = args.lr_warmup_steps
+
+    if args.lr_scheduler == "cosine":
+        base_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=args.steps - warmup_steps, eta_min=args.lr_eta_min
+        )
+        print(f"Usando CosineAnnealingLR: T_max={args.steps - warmup_steps}, eta_min={args.lr_eta_min}")
+        scheduler = WarmupScheduler(optimizer, base_scheduler, warmup_steps, args.lr)
+    elif args.lr_scheduler == "step":
+        base_scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer, step_size=args.lr_step_size, gamma=args.lr_gamma
+        )
+        print(f"Usando StepLR: step_size={args.lr_step_size}, gamma={args.lr_gamma}")
+        scheduler = WarmupScheduler(optimizer, base_scheduler, warmup_steps, args.lr)
+    elif args.lr_scheduler == "onecycle":
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer, max_lr=args.lr, total_steps=args.steps,
+            pct_start=args.onecycle_pct_start,
+            anneal_strategy=args.onecycle_anneal_strategy
+        )
+        print(f"Usando OneCycleLR: max_lr={args.lr}, total_steps={args.steps}, "
+              f"pct_start={args.onecycle_pct_start}, anneal_strategy={args.onecycle_anneal_strategy}")
+    else:
+        print("Usando LR fixo (sem scheduler)")
+
+    step = 0
+    start = time.time()
+
+    while step < args.steps:
+        for x, _paths in loader:
+            if step >= args.steps:
+                break
+
+            x = x.to(device)
+
+            y = transformer(x)
+
+            loss_id, mean_cos = identity_loss_ensemble(
+                embedders=embedders,
+                x_original=x,
+                x_transformed=y,
+                target_cos=args.target_cos,
+            )
+
+            # SSIM SEM A MASCARA
+            #ssim = ssim_index(x, y)
+            #loss_ssim = F.relu(args.tau_ssim - ssim).mean()
+
+                        # Obtém a máscara facial
+            face_mask = transformer.get_face_mask(x.shape[0], device)  # [B,1,H,W]
+            # Calcula SSIM apenas na região da face
+            ssim_vals = ssim_index_masked(x, y, face_mask)
+            loss_ssim = F.relu(args.tau_ssim - ssim_vals).mean()
+
+            loss_pix = pixel_l2_loss(x, y)
+            loss_tv = total_variation_loss(y)
+
+            regs = transformer.regularization()
+
+            loss = (
+                args.lambda_id * loss_id
+                + args.lambda_ssim * loss_ssim
+                + args.lambda_pixel * loss_pix
+                + args.lambda_tv * loss_tv
+                + args.lambda_flow_smooth * regs["flow_smooth"]
+                + args.lambda_dct_l2 * regs["dct_l2"]
+                + args.lambda_photo_l2 * regs["photo_l2"]
+            )
+
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+
+            if scheduler is not None:
+                scheduler.step()
+
+            if step % args.log_every == 0 or step == args.steps - 1:
+                elapsed = time.time() - start
+
+                current_lr = optimizer.param_groups[0]['lr']
+
+                euclid = math.sqrt(2.0 * (1.0 - mean_cos.item()))
+
+                with open(log_path, "a") as f:
+                    f.write(
+                        f"{step}," 
+                        f"{loss.item():.5f}," 
+                        f"{loss_id.item():.5f}," 
+                        f"{mean_cos.item():.4f}," 
+                        f"{ssim_vals.mean().item():.4f}," 
+                        f"{loss_pix.item():.6f}," 
+                        f"{loss_tv.item():.6f}," 
+                        f"{elapsed:.1f}," 
+                        f"{current_lr:.6f},"
+                        f"{euclid:.4f}\n"
+                    )
+
+                print(
+                    f"[step {step:06d}] "
+                    f"loss={loss.item():.5f} "
+                    f"id={loss_id.item():.5f} "
+                    f"cos={mean_cos.item():.4f} "
+                    f"euclid={euclid:.4f} "
+                    f"ssim={ssim_vals.mean().item():.4f} "
+                    f"pix={loss_pix.item():.6f} "
+                    f"tv={loss_tv.item():.6f} "
+                    f"elapsed={elapsed:.1f}s "
+                    f"lr={current_lr:.6f}\n"
+                )
+
+            if step % args.preview_every == 0:
+                save_preview(x, y, preview_dir / f"step_{step:06d}.jpg")
+
+            if step % args.save_every == 0 and step > 0:
+                save_checkpoint(transformer, args, out_dir / "transform.pt", step)
+
+            step += 1
+
+    save_checkpoint(transformer, args, out_dir / "transform.pt", step)
+    print(f"Modelo salvo em: {out_dir / 'transform.pt'}")
+    print(f"Log salvo em: {log_path}")
+
+
+def save_checkpoint(transformer: LightweightDeIdentifier, args, path: Path, step: int):
+    ckpt = {
+        "step": step,
+        "image_size": args.image_size,
+        "dct_k": args.dct_k,
+        "dct_fmin": args.dct_fmin,
+        "dct_fmax": args.dct_fmax,
+        "flow_grid": args.flow_grid,
+        "photo_grid": args.photo_grid,
+        "max_dct_amp": args.max_dct_amp,
+        "max_flow_px": args.max_flow_px,
+        "max_photo_amp": args.max_photo_amp,
+        "use_face_mask": not args.no_face_mask,
+        "state_dict": transformer.state_dict(),
+        "disable_dct": args.disable_dct,
+        "disable_flow": args.disable_flow,
+        "disable_photo": args.disable_photo,
+    }
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(ckpt, path)
