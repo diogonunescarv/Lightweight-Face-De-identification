@@ -67,7 +67,7 @@ class LightweightDeIdentifier(nn.Module):
     T_theta(x) = P_theta(G_theta(W_theta(x)))
 
     Componentes:
-      - DCT baixa/média frequência;
+      - DCT baixa/média frequência ou DT-CWT;
       - campo de deformação suave de baixa resolução;
       - ajuste fotométrico local suave.
     """
@@ -75,40 +75,61 @@ class LightweightDeIdentifier(nn.Module):
     def __init__(
         self,
         image_size: int = 224,
+        transform_type: str = "dct", # "dct" ou "dt-cwt"
         dct_k: int = 32,
         dct_fmin: int = 2,
         dct_fmax: int = 18,
+        wavelet_J: int = 3,                    # níveis da wavelet
+        max_wavelet_amp: float = 0.2,          # amplitude máxima para escala/fase
         flow_grid: int = 12,
         photo_grid: int = 12,
         max_dct_amp: float = 0.035,
         max_flow_px: float = 2.0,
         max_photo_amp: float = 0.035,
         use_face_mask: bool = True,
-        disable_dct: bool = False,
+        disable_dct: bool = False,            # desabilita transformada espectral (DCT ou wavelet)
         disable_flow: bool = False,
         disable_photo: bool = False,
     ):
         super().__init__()
 
-        self.image_size = int(image_size)
-        self.dct_k = int(dct_k)
-        self.dct_fmin = int(dct_fmin)
-        self.dct_fmax = int(dct_fmax)
-        self.flow_grid = int(flow_grid)
-        self.photo_grid = int(photo_grid)
+        self.transform_type = transform_type
+        self.wavelet_J = wavelet_J
+        self.max_wavelet_amp = max_wavelet_amp
 
-        self.max_dct_amp = float(max_dct_amp)
-        self.max_flow_px = float(max_flow_px)
-        self.max_photo_amp = float(max_photo_amp)
-        self.use_face_mask = bool(use_face_mask)
+        self.image_size = image_size
+        self.dct_k = dct_k
+        self.dct_fmin = dct_fmin
+        self.dct_fmax = dct_fmax
+        self.flow_grid = flow_grid
+        self.photo_grid = photo_grid
+
+        self.max_dct_amp = max_dct_amp
+        self.max_flow_px = max_flow_px
+        self.max_photo_amp = max_photo_amp
+        self.use_face_mask = use_face_mask
 
         self.disable_dct = disable_dct
         self.disable_flow = disable_flow
         self.disable_photo = disable_photo
 
-        # Coeficientes DCT universais por canal.
+        # ----- Parâmetros DCT (sempre existem, mas só usados se transform_type == 'dct')
         self.raw_dct = nn.Parameter(torch.zeros(1, 3, self.dct_k, self.dct_k))
 
+        # ----- Parâmetros DT-CWT (somente se transform_type == 'dtcwt') -----
+        if transform_type == 'dtcwt':
+            from .wavelet_transform import DTCWTUndecimated  # ou define no mesmo arquivo
+            self.wavelet = DTCWTUndecimated(J=wavelet_J)
+            # Parâmetros por nível (J) e orientação (6)
+            self.raw_wavelet_mag_scale = nn.Parameter(torch.zeros(1, 6, wavelet_J))
+            self.raw_wavelet_phase_shift = nn.Parameter(torch.zeros(1, 6, wavelet_J))
+        else:
+            self.wavelet = None
+            self.raw_wavelet_mag_scale = None
+            self.raw_wavelet_phase_shift = None
+
+        # ----- Parâmetros comuns (flow, photo) ----
+        
         # Campo de fluxo universal em baixa resolução.
         # Canal 0 = deslocamento horizontal em pixels.
         # Canal 1 = deslocamento vertical em pixels.
@@ -224,11 +245,40 @@ class LightweightDeIdentifier(nn.Module):
 
         y = x
 
-        # DCT
+        # Transformada espectral (DCT ou Wavelet)
         if not self.disable_dct:
-            dct_delta = self.reconstruct_dct_delta(b, device)
-            y = y + dct_delta
-            y = y.clamp(0.0, 1.0)
+            if self.transform_type == 'dct':
+                dct_delta = self.reconstruct_dct_delta(b, device)
+                y = y + dct_delta
+                y = y.clamp(0.0, 1.0)
+            elif self.transform_type == 'dtcwt':
+                Yl, Yh = self.wavelet(x)   # Yl: aproximação, Yh: lista de detalhes por nível
+                Yh_perturbed = []
+                for level, coeffs in enumerate(Yh):
+                    # coeffs: [B, 6, C, H_l, W_l] (complexo)
+                    mag = torch.abs(coeffs)
+                    phase = torch.angle(coeffs)
+
+                    # Parâmetros para este nível e orientação (broadcast)
+                    scale = 1.0 + self.max_wavelet_amp * torch.tanh(
+                        self.raw_wavelet_mag_scale[:, :, level].view(1, -1, 1, 1, 1)
+                    )
+                    phase_shift = self.max_wavelet_amp * torch.tanh(
+                        self.raw_wavelet_phase_shift[:, :, level].view(1, -1, 1, 1, 1)
+                    )
+
+                    new_mag = mag * scale
+                    new_phase = phase + phase_shift
+                    new_coeffs = new_mag * torch.exp(1j * new_phase)
+                    Yh_perturbed.append(new_coeffs)
+
+                y_wavelet = self.wavelet.inverse(Yl, Yh_perturbed)
+                y_wavelet = y_wavelet.clamp(0.0, 1.0)
+
+                face_mask = self.get_face_mask(b, device)
+                #y = self.wavelet.inverse(Yl, Yh_perturbed)
+                y = y_wavelet * face_mask + x * (1 - face_mask)
+                y = y.clamp(0.0, 1.0)
 
         # Warp (flow)
         if not self.disable_flow:    
@@ -254,8 +304,22 @@ class LightweightDeIdentifier(nn.Module):
         dct_l2 = (torch.tanh(self.raw_dct) ** 2).mean()
         photo_l2 = (torch.tanh(self.raw_photo) ** 2).mean()
 
-        return {
+        reg = {
             "flow_smooth": flow_smooth,
             "dct_l2": dct_l2,
             "photo_l2": photo_l2,
         }
+
+        if self.transform_type == 'dtcwt' and self.raw_wavelet_mag_scale is not None:
+            mag_l2 = (torch.tanh(self.raw_wavelet_mag_scale) ** 2).mean()
+            phase_l2 = (torch.tanh(self.raw_wavelet_phase_shift) ** 2).mean()
+
+            reg["wavelet_mag_l2"] = mag_l2
+            reg["wavelet_phase_l2"] = phase_l2
+            
+            # Suavidade entre níveis
+            smooth_mag = (self.raw_wavelet_mag_scale[:, :, 1:] - self.raw_wavelet_mag_scale[:, :, :-1]).abs().mean()
+            
+            reg["wavelet_mag_smooth"] = smooth_mag
+
+        return reg

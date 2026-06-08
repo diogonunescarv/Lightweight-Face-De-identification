@@ -7,9 +7,12 @@ def load_transformer_from_checkpoint(path: str | Path, device: torch.device) -> 
 
     transformer = LightweightDeIdentifier(
         image_size=ckpt["image_size"],
+        transform_type=ckpt.get("transform_type", "dct"),
         dct_k=ckpt["dct_k"],
         dct_fmin=ckpt["dct_fmin"],
         dct_fmax=ckpt["dct_fmax"],
+        wavelet_J=ckpt.get("wavelet_J", 3),
+        max_wavelet_amp=ckpt.get("max_wavelet_amp", 0.2),
         flow_grid=ckpt["flow_grid"],
         photo_grid=ckpt["photo_grid"],
         max_dct_amp=ckpt["max_dct_amp"],

@@ -54,6 +54,13 @@ def build_parser():
     p_train.add_argument("--preview-every", type=int, default=100)
     p_train.add_argument("--save-every", type=int, default=500)
 
+    p_train.add_argument("--transform-type", default="dct", choices=["dct", "dtcwt"])
+    p_train.add_argument("--wavelet-J", type=int, default=3)
+    p_train.add_argument("--max-wavelet-amp", type=float, default=0.2)
+    p_train.add_argument("--lambda-wavelet-mag", type=float, default=0.01)
+    p_train.add_argument("--lambda-wavelet-phase", type=float, default=0.01)
+    p_train.add_argument("--lambda-wavelet-smooth", type=float, default=0.001)
+
     p_train.add_argument("--lr-scheduler", type=str, default="none",
                      choices=["none", "cosine", "step", "onecycle"],
                      help="Tipo de agendador: none (fixo), cosine, step, onecycle")

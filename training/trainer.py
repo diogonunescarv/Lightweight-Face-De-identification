@@ -139,6 +139,11 @@ def train(args):
                 + args.lambda_photo_l2 * regs["photo_l2"]
             )
 
+            if args.transform_type == "dtcwt":
+                loss += args.lambda_wavelet_mag * regs.get("wavelet_mag_l2", 0.0)
+                loss += args.lambda_wavelet_phase * regs.get("wavelet_phase_l2", 0.0)
+                loss += args.lambda_wavelet_smooth * regs.get("wavelet_mag_smooth", 0.0)
+
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
@@ -206,6 +211,9 @@ def save_checkpoint(transformer: LightweightDeIdentifier, args, path: Path, step
         "max_flow_px": args.max_flow_px,
         "max_photo_amp": args.max_photo_amp,
         "use_face_mask": not args.no_face_mask,
+        "transform_type": transformer.transform_type,
+        "wavelet_J": transformer.wavelet_J,
+        "max_wavelet_amp": transformer.max_wavelet_amp,
         "state_dict": transformer.state_dict(),
         "disable_dct": args.disable_dct,
         "disable_flow": args.disable_flow,
