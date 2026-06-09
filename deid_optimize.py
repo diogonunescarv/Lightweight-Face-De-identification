@@ -6,6 +6,7 @@ import argparse
 from training.trainer import train
 from inference.apply import apply_transform
 from evaluation.evaluate import evaluate
+from evaluation.evaluate_single import evaluate_single_model
 
 def build_parser():
     parser = argparse.ArgumentParser(
@@ -109,6 +110,21 @@ def build_parser():
     p_evaluate.add_argument("--num-workers", type=int, default=0)
     p_evaluate.add_argument("--output-summary", type=str, default=None,
                             help="Opcional: caminho para salvar um resumo em CSV/txt")
+    
+
+    # -------------------------
+    # evaluate-single
+    # -------------------------  
+    p_eval_single = sub.add_parser("evaluate-single", help="Avalia um único modelo e salva JSON/CSV + imagens")
+    p_eval_single.add_argument("--checkpoint", required=True)
+    p_eval_single.add_argument("--data", required=True)
+    p_eval_single.add_argument("--output", required=True, help="Caminho base para saída (ex: ./metrics/meu_modelo)")
+    p_eval_single.add_argument("--device", default="cpu")
+    p_eval_single.add_argument("--batch-size", type=int, default=8)
+    p_eval_single.add_argument("--num-workers", type=int, default=4)
+    p_eval_single.add_argument("--max-samples", type=int, default=0, help="Limite de imagens para métricas (0=todas)")
+    p_eval_single.add_argument("--save-images", action="store_true", help="Salvar imagens transformadas")
+    p_eval_single.add_argument("--max-visual-samples", type=int, default=10, help="Nº máximo de imagens visuais")
 
     return parser
 
@@ -123,6 +139,18 @@ def main():
         apply_transform(args)
     elif args.mode == "evaluate":
         evaluate(args)
+    elif args.mode == "evaluate-single":
+        evaluate_single_model(
+            checkpoint_path=args.checkpoint,
+            data_dir=args.data,
+            output_file=args.output,
+            device=args.device,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            max_samples=args.max_samples,
+            save_images=args.save_images,
+            max_visual_samples=args.max_visual_samples,
+        )
     else:
         raise RuntimeError(f"Modo desconhecido: {args.mode}")
 
