@@ -1,6 +1,7 @@
 """
 Avaliação de um único modelo, salvando métricas (JSON/CSV) e
 opcionalmente as imagens transformadas para inspeção visual.
+Inclui salvamento de resultados por imagem (CSV individual).
 """
 
 import json
@@ -16,6 +17,7 @@ from data.dataset import FaceImageFolder, tensor_to_pil
 from losses.losses import ssim_index_masked, identity_loss_ensemble
 from models.embedders import load_authorized_embedders
 from utils.checkpoint import load_transformer_from_checkpoint
+
 
 @torch.no_grad()
 def evaluate_single_model(
@@ -44,6 +46,7 @@ def evaluate_single_model(
     all_euclid = []
     all_ssim = []
     all_times_ms = []
+    per_image_data = []  # lista de dicionários para cada imagem
     total_images = 0
     saved_visual = 0
     
@@ -84,6 +87,16 @@ def evaluate_single_model(
         face_mask = model.get_face_mask(x.size(0), device)
         ssim_vals = ssim_index_masked(x, y, face_mask)  # [B]
         
+        # Armazenar resultados por imagem
+        for i in range(x.size(0)):
+            per_image_data.append({
+                "image": Path(paths[i]).name,
+                "cosine": mean_cos_batch[i].item(),
+                "euclidean": euclid_batch[i].item(),
+                "ssim": ssim_vals[i].item(),
+                "inference_time_ms": batch_time_ms,
+            })
+        
         all_cos.extend(mean_cos_batch.cpu().tolist())
         all_euclid.extend(euclid_batch.cpu().tolist())
         all_ssim.extend(ssim_vals.cpu().tolist())
@@ -110,6 +123,16 @@ def evaluate_single_model(
     
     print()
     
+    # Salvar resultados por imagem em CSV
+    per_image_csv = out_base.with_suffix(".per_image.csv")
+    with open(per_image_csv, "w", newline="") as f:
+        fieldnames = ["image", "cosine", "euclidean", "ssim", "inference_time_ms"]
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(per_image_data)
+    print(f"Resultados por imagem salvos em: {per_image_csv}")
+    
+    # Métricas consolidadas
     metrics = {
         "model": str(Path(checkpoint_path).name),
         "checkpoint": checkpoint_path,
@@ -124,7 +147,7 @@ def evaluate_single_model(
         "inference_time_ms_std": float(torch.tensor(all_times_ms).std()),
     }
     
-    # Salvar JSON e CSV
+    # Salvar JSON e CSV (resumo)
     json_path = out_base.with_suffix(".json")
     with open(json_path, "w") as f:
         json.dump(metrics, f, indent=2)
@@ -134,8 +157,7 @@ def evaluate_single_model(
         writer.writeheader()
         writer.writerow(metrics)
     
-    print(f"Métricas salvas em JSON: {json_path}")
-    print(f"Métricas salvas em CSV: {csv_path}")
+    print(f"Métricas resumidas salvas em: {json_path} e {csv_path}")
     
     print("\n" + "="*50)
     print(f"Resultados para {metrics['model']}")
