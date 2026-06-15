@@ -124,7 +124,7 @@ def train(args):
             ssim_vals = ssim_index_masked(x, y, face_mask)
             loss_ssim = F.relu(args.tau_ssim - ssim_vals).mean()
 
-            loss_pix = pixel_l2_loss(x, y)
+            #loss_pix = pixel_l2_loss(x, y)
             loss_tv = total_variation_loss(y)
 
             regs = transformer.regularization()
@@ -132,7 +132,7 @@ def train(args):
             loss = (
                 args.lambda_id * loss_id
                 + args.lambda_ssim * loss_ssim
-                + args.lambda_pixel * loss_pix
+                # + args.lambda_pixel * loss_pix
                 + args.lambda_tv * loss_tv
                 + args.lambda_flow_smooth * regs["flow_smooth"]
                 + args.lambda_dct_l2 * regs["dct_l2"]
@@ -165,7 +165,7 @@ def train(args):
                         f"{loss_id.item():.5f}," 
                         f"{mean_cos.item():.4f}," 
                         f"{ssim_vals.mean().item():.4f}," 
-                        f"{loss_pix.item():.6f}," 
+                        # f"{loss_pix.item():.6f}," 
                         f"{loss_tv.item():.6f}," 
                         f"{elapsed:.1f}," 
                         f"{current_lr:.6f},"
@@ -179,7 +179,7 @@ def train(args):
                     f"cos={mean_cos.item():.4f} "
                     f"euclid={euclid:.4f} "
                     f"ssim={ssim_vals.mean().item():.4f} "
-                    f"pix={loss_pix.item():.6f} "
+                    # f"pix={loss_pix.item():.6f} "
                     f"tv={loss_tv.item():.6f} "
                     f"elapsed={elapsed:.1f}s "
                     f"lr={current_lr:.6f}\n"

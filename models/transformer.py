@@ -301,16 +301,16 @@ class LightweightDeIdentifier(nn.Module):
 
         flow_smooth = (dx ** 2).mean() + (dy ** 2).mean()
 
-        dct_l2 = (torch.tanh(self.raw_dct) ** 2).mean()
         photo_l2 = (torch.tanh(self.raw_photo) ** 2).mean()
 
         reg = {
             "flow_smooth": flow_smooth,
-            "dct_l2": dct_l2,
             "photo_l2": photo_l2,
         }
 
-        if self.transform_type == 'dtcwt' and self.raw_wavelet_mag_scale is not None:
+        if self.transform_type == 'dct':
+            reg["dct_l2"] = (torch.tanh(self.raw_dct) ** 2).mean()
+        elif self.transform_type == 'dtcwt' and self.raw_wavelet_mag_scale is not None:
             mag_l2 = (torch.tanh(self.raw_wavelet_mag_scale) ** 2).mean()
             phase_l2 = (torch.tanh(self.raw_wavelet_phase_shift) ** 2).mean()
 
