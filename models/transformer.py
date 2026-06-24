@@ -175,6 +175,7 @@ class LightweightDeIdentifier(nn.Module):
         photo = F.interpolate(photo, size=(h, w), mode="bicubic", align_corners=False)
         photo = photo.expand(batch_size, 3, h, w)
 
+        # 0.015 de viés por canal (para evitar saturação) -> posso fazer isso ser um hiperparametro, mas por enquanto vou deixar fixo
         bias = 0.015 * torch.tanh(self.raw_channel_bias)
         photo = photo + bias
 

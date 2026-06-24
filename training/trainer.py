@@ -135,7 +135,7 @@ def train(args):
                 # + args.lambda_pixel * loss_pix
                 + args.lambda_tv * loss_tv
                 + args.lambda_flow_smooth * regs["flow_smooth"]
-                + args.lambda_dct_l2 * regs["dct_l2"]
+                + args.lambda_dct_l2 * regs.get("dct_l2", 0.0)
                 + args.lambda_photo_l2 * regs["photo_l2"]
             )
 
