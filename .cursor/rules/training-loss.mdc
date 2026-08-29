@@ -1,0 +1,14 @@
+---
+description: Convenções para código de treinamento, losses e modelos
+globs: ["training/**/*.py", "losses/**/*.py", "models/**/*.py"]
+---
+
+# Código de treino / losses / modelos
+
+- Ao adicionar um novo termo de loss: implementar como componente separado em losses.py, com peso lambda_* configurável via CLI (não hardcoded), e garantir que é logado em steps.txt junto às demais métricas.
+- Toda mudança em losses ou no comportamento de treino deve ser validada rodando `evaluate` (avaliação resumida) num checkpoint de referência antes e depois da mudança, para permitir comparação justa (mesmo dado, mesmo seed).
+- Preferir operações vetorizadas/batch a loops Python explícitos em forward() e nas funções de loss — o projeto é otimizado para ser leve.
+- Ao mexer no scheduler (utils/scheduler.py), preservar compatibilidade com todos os modos existentes: --lr-scheduler none/cosine/step/onecycle.
+- Ao mexer em models/wavelet_transform.py, checar explicitamente que a dependência pytorch-wavelets continua sendo usada da forma esperada — não assumir a API de memória; verificar a assinatura real instalada no ambiente antes de propor uma chamada.
+- Qualquer alteração que mude a forma como um checkpoint .pt é salvo/carregado deve ser sinalizada claramente (pode quebrar checkpoints antigos) e, se possível, manter retrocompatibilidade em utils/checkpoint.py.
+- Ao final de uma tarefa nesta área, sugerir uma entrada objetiva para DECISIONS.md (o que mudou, por quê, e o resultado da validação).

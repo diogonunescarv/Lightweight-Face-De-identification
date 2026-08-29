@@ -30,6 +30,8 @@ Este projeto implementa uma transformação facial leve para desidentificação 
 - PyTorch 1.9+
 - torchvision
 - facenet-pytorch (para o embedder facial)
+- insightface + onnxruntime (para detecção facial SCRFD)
+- opencv-python-headless (conversão de imagem para o detector)
 - pytorch-wavelets (para DT‑CWT)
 - numpy, Pillow, tqdm
 
@@ -51,6 +53,28 @@ pip install -e .
 
 Caso prefira não instalar, mantenha a estrutura de pastas e execute python `deid_optimize.py` a partir da raiz.
 
+### Modelo de detecção facial (buffalo_m)
+
+O detector facial (`models/face_detector.py`) usa o pack **buffalo_m** do insightface (SCRFD-2.5GF, ONNX `det_2.5g.onnx`). Baixe o pack na primeira utilização:
+
+```bash
+python -c "from insightface.utils import ensure_available; ensure_available('models', 'buffalo_m')"
+```
+
+Os arquivos são extraídos em `~/.insightface/models/buffalo_m/`. Para inferência acelerada em GPU, instale `onnxruntime-gpu` no lugar de `onnxruntime`.
+
+Uso básico:
+
+```python
+from models.face_detector import detect_face
+
+result = detect_face("caminho/para/imagem.jpg")
+if result is not None:
+    bbox, landmarks_5pts, score = result
+```
+
+Validação visual: execute `notebooks/validate_face_detector.ipynb` (lê imagens do CelebA-HQ local e salva figuras em `notebooks/outputs/detector_validation/`).
+
 ## Estrutura do código
 
 ```bash
@@ -59,6 +83,8 @@ Caso prefira não instalar, mantenha a estrutura de pastas e execute python `dei
 ├── models/
 │   ├── transformer.py             # Classe LightweightDeIdentifier
 │   ├── embedders.py               # FaceNetEmbedder e load_authorized_embedders
+│   ├── face_detector.py           # SCRFD 2.5G KPS (bbox + 5 landmarks)
+│   ├── masks.py                   # Máscaras elípticas por região (landmarks)
 │   └── wavelet_transform.py       # DT-CWT
 ├── data/
 │   ├── dataset.py                 # FaceImageFolder, tensor_to_pil, save_preview
@@ -152,7 +178,9 @@ Todos os argumentos estão descritos abaixo.
 | `--max-dct-amp` | `0.035` | Amplitude máxima da perturbação DCT (em escala de pixel). |
 | `--max-flow-px` | `2.0` | Deslocamento máximo em pixels para o fluxo. |
 | `--max-photo-amp` | `0.035` | Amplitude máxima do ajuste fotométrico. |
-| `--no-face-mask` | (não ativado) | Se ativado, desabilita a máscara elíptica (a transformação afeta toda a imagem). |
+| `--no-face-mask` | (não ativado) | Se ativado, desabilita a máscara (a transformação afeta toda a imagem). |
+| `--mask-mode` | `fixed` | `fixed` = elipse centrada original; `landmarks` = máscaras por região SCRFD. |
+| `--mask-regions` | `full` | Regiões separadas por vírgula: `eyes`, `nose`, `mouth`, `full`. Só usado com `--mask-mode landmarks`. |
 
 ### Flags do agendador de taxa de aprendizado (scheduler)
 

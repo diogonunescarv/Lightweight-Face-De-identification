@@ -7,6 +7,40 @@ from training.trainer import train
 from inference.apply import apply_transform
 from evaluation.evaluate import evaluate
 from evaluation.evaluate_single import evaluate_single_model
+from models.masks import parse_mask_regions
+
+
+def add_mask_args(parser: argparse.ArgumentParser, *, for_train: bool = False) -> None:
+    if for_train:
+        parser.add_argument(
+            "--mask-mode",
+            default="fixed",
+            choices=["fixed", "landmarks"],
+            help="fixed=elipse centrada original; landmarks=máscaras por região SCRFD.",
+        )
+        parser.add_argument(
+            "--mask-regions",
+            default="full",
+            help="Regiões separadas por vírgula: eyes,nose,mouth,full. Só usado com --mask-mode landmarks.",
+        )
+    else:
+        parser.add_argument(
+            "--mask-mode",
+            default=None,
+            choices=["fixed", "landmarks"],
+            help="Override do modo de máscara (default: metadados do checkpoint).",
+        )
+        parser.add_argument(
+            "--mask-regions",
+            default=None,
+            help="Override das regiões (default: metadados do checkpoint).",
+        )
+
+
+def validate_mask_regions_arg(args) -> None:
+    spec = getattr(args, "mask_regions", None)
+    if spec is not None:
+        parse_mask_regions(spec)
 
 def build_parser():
     parser = argparse.ArgumentParser(
@@ -39,6 +73,7 @@ def build_parser():
     p_train.add_argument("--max-flow-px", type=float, default=2.0)
     p_train.add_argument("--max-photo-amp", type=float, default=0.035)
     p_train.add_argument("--no-face-mask", action="store_true")
+    add_mask_args(p_train, for_train=True)
 
     p_train.add_argument("--target-cos", type=float, default=0.25)
     p_train.add_argument("--tau-ssim", type=float, default=0.95)
@@ -96,6 +131,7 @@ def build_parser():
     p_apply.add_argument("--image-size", type=int, default=224)
     p_apply.add_argument("--batch-size", type=int, default=8)
     p_apply.add_argument("--num-workers", type=int, default=0)
+    add_mask_args(p_apply)
 
     # -------------------------
     # evaluate
@@ -110,6 +146,8 @@ def build_parser():
     p_evaluate.add_argument("--num-workers", type=int, default=0)
     p_evaluate.add_argument("--output-summary", type=str, default=None,
                             help="Opcional: caminho para salvar um resumo em CSV/txt")
+    add_mask_args(p_evaluate)
+
     
 
     # -------------------------
@@ -125,6 +163,7 @@ def build_parser():
     p_eval_single.add_argument("--max-samples", type=int, default=0, help="Limite de imagens para métricas (0=todas)")
     p_eval_single.add_argument("--save-images", action="store_true", help="Salvar imagens transformadas")
     p_eval_single.add_argument("--max-visual-samples", type=int, default=10, help="Nº máximo de imagens visuais")
+    add_mask_args(p_eval_single)
 
     return parser
 
@@ -134,12 +173,16 @@ def main():
     args = parser.parse_args()
 
     if args.mode == "train":
+        validate_mask_regions_arg(args)
         train(args)
     elif args.mode == "apply":
+        validate_mask_regions_arg(args)
         apply_transform(args)
     elif args.mode == "evaluate":
+        validate_mask_regions_arg(args)
         evaluate(args)
     elif args.mode == "evaluate-single":
+        validate_mask_regions_arg(args)
         evaluate_single_model(
             checkpoint_path=args.checkpoint,
             data_dir=args.data,
@@ -150,6 +193,8 @@ def main():
             max_samples=args.max_samples,
             save_images=args.save_images,
             max_visual_samples=args.max_visual_samples,
+            mask_mode=args.mask_mode,
+            mask_regions=args.mask_regions,
         )
     else:
         raise RuntimeError(f"Modo desconhecido: {args.mode}")

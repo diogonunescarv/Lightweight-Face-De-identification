@@ -6,6 +6,7 @@ from pathlib import Path
 
 from models.transformer import LightweightDeIdentifier
 from models.embedders import load_authorized_embedders
+from models.masks import resolve_face_mask_for_model
 from utils.checkpoint import load_transformer_from_checkpoint
 from data.dataset import FaceImageFolder
 from losses.losses import ssim_index_masked
@@ -17,6 +18,15 @@ def evaluate(args):
     # Carrega o transformador
     transformer = load_transformer_from_checkpoint(args.checkpoint, device)
     transformer.eval()
+
+    mask_mode = getattr(args, "mask_mode", None)
+    mask_regions = getattr(args, "mask_regions", None)
+    landmark_detector = None
+    effective_mode = mask_mode or transformer.mask_mode
+    if effective_mode == "landmarks" and transformer.use_face_mask:
+        from models.face_detector import get_default_detector
+
+        landmark_detector = get_default_detector()
 
     # Carrega os embedders (os mesmos usados no treino)
     embedders = load_authorized_embedders(device)
@@ -36,7 +46,16 @@ def evaluate(args):
 
     for x, paths in loader:
         x = x.to(device)
-        y = transformer(x)
+
+        face_mask = resolve_face_mask_for_model(
+            transformer,
+            paths,
+            device,
+            mask_mode=mask_mode,
+            mask_regions=mask_regions,
+            detector=landmark_detector,
+        )
+        y = transformer(x, face_mask=face_mask)
 
         # Similaridade cosseno (média sobre todos os embedders)
         batch_cos = []
@@ -52,7 +71,14 @@ def evaluate(args):
         # SSIM SEM MASCARA
         #ssim_vals = ssim_index(x, y)   # [B]
 
-        face_mask = transformer.get_face_mask(x.shape[0], device)
+        face_mask = resolve_face_mask_for_model(
+            transformer,
+            paths,
+            device,
+            mask_mode=mask_mode,
+            mask_regions=mask_regions,
+            detector=landmark_detector,
+        )
         ssim_vals = ssim_index_masked(x, y, face_mask)   # [B]
         all_ssim.append(ssim_vals)
 

@@ -4,6 +4,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from models.transformer import LightweightDeIdentifier
+from models.masks import resolve_face_mask_for_model
 from data.dataset import FaceImageFolder, tensor_to_pil
 from utils.checkpoint import load_transformer_from_checkpoint
 
@@ -13,6 +14,15 @@ def apply_transform(args):
 
     transformer = load_transformer_from_checkpoint(args.checkpoint, device)
     dataset = FaceImageFolder(args.input, args.image_size)
+
+    landmark_detector = None
+    mask_mode = getattr(args, "mask_mode", None)
+    mask_regions = getattr(args, "mask_regions", None)
+    effective_mode = mask_mode or transformer.mask_mode
+    if effective_mode == "landmarks" and transformer.use_face_mask:
+        from models.face_detector import get_default_detector
+
+        landmark_detector = get_default_detector()
 
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -31,8 +41,17 @@ def apply_transform(args):
     for x, paths in loader:
         x = x.to(device)
 
+        face_mask = resolve_face_mask_for_model(
+            transformer,
+            paths,
+            device,
+            mask_mode=mask_mode,
+            mask_regions=mask_regions,
+            detector=landmark_detector,
+        )
+
         t0 = time.time()
-        y = transformer(x)
+        y = transformer(x, face_mask=face_mask)
         batch_time = time.time() - t0
 
         for img_tensor, src_path in zip(y, paths):

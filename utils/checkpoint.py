@@ -1,9 +1,14 @@
 import torch
 from pathlib import Path
 from models.transformer import LightweightDeIdentifier
+from models.masks import parse_mask_regions
 
 def load_transformer_from_checkpoint(path: str | Path, device: torch.device) -> LightweightDeIdentifier:
     ckpt = torch.load(path, map_location=device)
+
+    mask_regions = ckpt.get("mask_regions", "full")
+    if isinstance(mask_regions, str):
+        mask_regions = parse_mask_regions(mask_regions)
 
     transformer = LightweightDeIdentifier(
         image_size=ckpt["image_size"],
@@ -19,6 +24,8 @@ def load_transformer_from_checkpoint(path: str | Path, device: torch.device) -> 
         max_flow_px=ckpt["max_flow_px"],
         max_photo_amp=ckpt["max_photo_amp"],
         use_face_mask=ckpt["use_face_mask"],
+        mask_mode=ckpt.get("mask_mode", "fixed"),
+        mask_regions=mask_regions,
         disable_dct=ckpt["disable_dct"],
         disable_flow=ckpt["disable_flow"],
         disable_photo=ckpt["disable_photo"],

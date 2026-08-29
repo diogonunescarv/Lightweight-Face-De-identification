@@ -1,0 +1,53 @@
+---
+description: Contexto geral do projeto de mestrado (de-identificação facial)
+alwaysApply: true
+---
+
+# Lightweight Face De-identification — contexto do projeto
+
+## O que é
+Implementa uma transformação facial leve e paramétrica para desidentificação visual, preservando a qualidade perceptual da imagem. A transformação atua no domínio espectral (DCT ou DT-CWT), combinada com:
+- deformação geométrica suave (flow field de baixa resolução)
+- ajuste fotométrico local
+
+Tal transformação deve ser realizada e otimizada somente em área limitada por uma máscara.
+
+Treinamento é auto-supervisionado: usa apenas as imagens de face (sem labels), otimizando a transformação para reduzir a similaridade de embeddings faciais (FaceNet) entre imagem original e transformada, mantendo SSIM alto.
+
+## Estrutura (não mover/renomear sem atualizar este arquivo)
+- `deid_optimize.py` — CLI (subcomandos: train, apply, evaluate, evaluate-single)
+- `models/transformer.py` — LightweightDeIdentifier (classe central)
+- `models/embedders.py` — FaceNetEmbedder, load_authorized_embedders
+- `models/wavelet_transform.py` — implementação DT-CWT
+- `losses/losses.py` — identity_loss_ensemble, SSIM, TV, L2
+- `training/trainer.py` — loop de treinamento
+- `evaluation/evaluate.py` e `evaluate_single.py` — avaliação resumida vs detalhada
+- `inference/apply.py` — aplicação em lote
+- `utils/` — checkpoint, scheduler (WarmupScheduler), helpers
+- `notebooks/` — exploração e figuras para a dissertação (não lógica canônica)
+- `scripts/` - scripts utilizados para treinamento e avalição de modelos
+
+## Métricas-chave (não inventar outras sem justificar)
+- `cos`: similaridade cosseno média de embeddings (queremos baixo, perto de --target-cos)
+- `euclid = sqrt(2*(1-cos))`: quanto maior, melhor a desidentificação
+- `ssim`: qualidade estrutural (queremos > 0.85)
+- Regras práticas: cos < 0.2 e ssim > 0.85 = sucesso; ssim < 0.8 = qualidade ruim; cos perto de 0 ou negativo = desidentificação agressiva demais (possíveis artefatos)
+
+## Convenções
+- Todo hiperparâmetro novo deve virar flag de CLI em deid_optimize.py, com default sensato e entrada na tabela correspondente do README.
+- Não quebrar a compatibilidade dos checkpoints .pt existentes sem avisar explicitamente (há experimentos rodando/salvos que dependem deles).
+- Ao alterar losses ou métricas, atualizar a seção "Interpretando os resultados" do README no mesmo commit/PR.
+- Notebooks em notebooks/ são para exploração e geração de figuras da dissertação — não devem conter lógica de treino "canônica" (essa vive em training/trainer.py). Se um notebook descobrir algo útil, promova para código em models/losses/training e só chame a partir do notebook. Além disso, notebooks, também podem ser utilizados para pré processamento de imagens ou bases de dados.
+- Commits pequenos, um por mudança lógica. Mensagem descrevendo o efeito observável (ex.: "reduz artefatos DT-CWT ajustando lambda_wavelet_smooth"), não só o que foi tocado.
+- Scripts em scripts/ são utilizados para o treinamento e avaliação de modelos com diferentes hiperparametros. No geral, são utilizados para rodar mais de um experimento em sequência. 
+
+## O que NUNCA fazer sem perguntar primeiro
+- Mudar a arquitetura de LightweightDeIdentifier de forma que quebre checkpoints antigos.
+- Trocar a métrica de avaliação principal (cos/euclid/ssim) por outra.
+- Adicionar dependências pesadas sem justificar (o projeto deve permanecer leve/"lightweight" — isso é parte da contribuição da dissertação).
+- Iniciar um treino longo (muitos --steps) sem confirmação explícita.
+
+## Arquivos de apoio (referenciar manualmente quando relevante)
+- `@DECISIONS.md` — histórico de decisões de design e resultados de experimentos
+- `@TODO.md` — backlog de melhorias planejadas
+- `@EXPERIMENTS.md` — tabela de métricas por checkpoint/configuração

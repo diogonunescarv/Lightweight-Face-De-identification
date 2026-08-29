@@ -16,6 +16,7 @@ from PIL import Image
 from data.dataset import FaceImageFolder, tensor_to_pil
 from losses.losses import ssim_index_masked, identity_loss_ensemble
 from models.embedders import load_authorized_embedders
+from models.masks import resolve_face_mask_for_model
 from utils.checkpoint import load_transformer_from_checkpoint
 
 
@@ -30,6 +31,8 @@ def evaluate_single_model(
     max_samples: int = 0,
     save_images: bool = False,
     max_visual_samples: int = 10,
+    mask_mode: str | None = None,
+    mask_regions: str | None = None,
 ) -> dict:
     device = torch.device(device)
     out_base = Path(output_file)
@@ -37,6 +40,13 @@ def evaluate_single_model(
     
     model = load_transformer_from_checkpoint(checkpoint_path, device)
     embedders = load_authorized_embedders(device)
+
+    landmark_detector = None
+    effective_mode = mask_mode or model.mask_mode
+    if effective_mode == "landmarks" and model.use_face_mask:
+        from models.face_detector import get_default_detector
+
+        landmark_detector = get_default_detector()
     
     dataset = FaceImageFolder(data_dir, model.image_size)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False,
@@ -62,12 +72,21 @@ def evaluate_single_model(
         if max_samples > 0 and total_images >= max_samples:
             break
         x = x.to(device)
+
+        face_mask = resolve_face_mask_for_model(
+            model,
+            paths,
+            device,
+            mask_mode=mask_mode,
+            mask_regions=mask_regions,
+            detector=landmark_detector,
+        )
         
         # Medir tempo
         if device.type == 'cuda':
             torch.cuda.synchronize()
         t0 = time.perf_counter()
-        y = model(x)
+        y = model(x, face_mask=face_mask)
         if device.type == 'cuda':
             torch.cuda.synchronize()
         t1 = time.perf_counter()
@@ -84,7 +103,6 @@ def evaluate_single_model(
         euclid_batch = torch.sqrt(2.0 * (1.0 - mean_cos_batch))
         
         # SSIM com máscara
-        face_mask = model.get_face_mask(x.size(0), device)
         ssim_vals = ssim_index_masked(x, y, face_mask)  # [B]
         
         # Armazenar resultados por imagem

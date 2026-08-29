@@ -87,6 +87,8 @@ class LightweightDeIdentifier(nn.Module):
         max_flow_px: float = 2.0,
         max_photo_amp: float = 0.035,
         use_face_mask: bool = True,
+        mask_mode: str = "fixed",
+        mask_regions: tuple[str, ...] = ("full",),
         disable_dct: bool = False,            # desabilita transformada espectral (DCT ou wavelet)
         disable_flow: bool = False,
         disable_photo: bool = False,
@@ -108,6 +110,8 @@ class LightweightDeIdentifier(nn.Module):
         self.max_flow_px = max_flow_px
         self.max_photo_amp = max_photo_amp
         self.use_face_mask = use_face_mask
+        self.mask_mode = mask_mode
+        self.mask_regions = mask_regions
 
         self.disable_dct = disable_dct
         self.disable_flow = disable_flow
@@ -148,15 +152,17 @@ class LightweightDeIdentifier(nn.Module):
         bw = dct_basis(self.dct_k, w, device)
         dct_mask = build_dct_frequency_mask(self.dct_k, self.dct_fmin, self.dct_fmax, device)
 
+        return bh, bw, dct_mask
+
+    def get_fixed_face_mask(self, device: torch.device) -> torch.Tensor:
         if self.use_face_mask:
-            face_mask = build_elliptic_face_mask(h, w, device)
-        else:
-            face_mask = torch.ones(1, 1, h, w, device=device)
+            return build_elliptic_face_mask(self.image_size, self.image_size, device)
+        return torch.ones(1, 1, self.image_size, self.image_size, device=device)
 
-        return bh, bw, dct_mask, face_mask
-
-    def reconstruct_dct_delta(self, batch_size: int, device: torch.device) -> torch.Tensor:
-        bh, bw, dct_mask, face_mask = self._get_buffers(device)
+    def reconstruct_dct_delta(
+        self, batch_size: int, device: torch.device, face_mask: torch.Tensor
+    ) -> torch.Tensor:
+        bh, bw, dct_mask = self._get_buffers(device)
 
         coeff = self.max_dct_amp * torch.tanh(self.raw_dct) * dct_mask
         coeff = coeff.expand(batch_size, -1, -1, -1)
@@ -167,9 +173,10 @@ class LightweightDeIdentifier(nn.Module):
 
         return delta
 
-    def reconstruct_photo_delta(self, batch_size: int, device: torch.device) -> torch.Tensor:
+    def reconstruct_photo_delta(
+        self, batch_size: int, device: torch.device, face_mask: torch.Tensor
+    ) -> torch.Tensor:
         h = w = self.image_size
-        _, _, _, face_mask = self._get_buffers(device)
 
         photo = self.max_photo_amp * torch.tanh(self.raw_photo)
         photo = F.interpolate(photo, size=(h, w), mode="bicubic", align_corners=False)
@@ -181,9 +188,10 @@ class LightweightDeIdentifier(nn.Module):
 
         return photo * face_mask
 
-    def reconstruct_flow(self, batch_size: int, device: torch.device) -> torch.Tensor:
+    def reconstruct_flow(
+        self, batch_size: int, device: torch.device, face_mask: torch.Tensor
+    ) -> torch.Tensor:
         h = w = self.image_size
-        _, _, _, face_mask = self._get_buffers(device)
 
         flow = self.max_flow_px * torch.tanh(self.raw_flow)
         flow = F.interpolate(flow, size=(h, w), mode="bicubic", align_corners=False)
@@ -221,15 +229,16 @@ class LightweightDeIdentifier(nn.Module):
 
     def get_face_mask(self, batch_size: int, device: torch.device) -> torch.Tensor:
         """
-        Retorna a máscara facial elíptica (suave) para as imagens.
+        Retorna a máscara facial elíptica fixa (suave) para as imagens.
         """
+        return self.get_fixed_face_mask(device).expand(batch_size, -1, -1, -1)
 
-        _, _, _, face_mask = self._get_buffers(device)
-        return face_mask.expand(batch_size, -1, -1, -1)   # [B, 1, H, W]
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, face_mask: torch.Tensor | None = None) -> torch.Tensor:
         b = x.shape[0]
         device = x.device
+
+        if face_mask is None:
+            face_mask = self.get_face_mask(b, device)
 
         # CÓDIGO ANTERIOR:
         # dct_delta = self.reconstruct_dct_delta(b, device)
@@ -249,7 +258,7 @@ class LightweightDeIdentifier(nn.Module):
         # Transformada espectral (DCT ou Wavelet)
         if not self.disable_dct:
             if self.transform_type == 'dct':
-                dct_delta = self.reconstruct_dct_delta(b, device)
+                dct_delta = self.reconstruct_dct_delta(b, device, face_mask)
                 y = y + dct_delta
                 y = y.clamp(0.0, 1.0)
             elif self.transform_type == 'dtcwt':
@@ -276,19 +285,17 @@ class LightweightDeIdentifier(nn.Module):
                 y_wavelet = self.wavelet.inverse(Yl, Yh_perturbed)
                 y_wavelet = y_wavelet.clamp(0.0, 1.0)
 
-                face_mask = self.get_face_mask(b, device)
-                #y = self.wavelet.inverse(Yl, Yh_perturbed)
                 y = y_wavelet * face_mask + x * (1 - face_mask)
                 y = y.clamp(0.0, 1.0)
 
         # Warp (flow)
-        if not self.disable_flow:    
-            flow = self.reconstruct_flow(b, device)
+        if not self.disable_flow:
+            flow = self.reconstruct_flow(b, device, face_mask)
             y = self.warp(y, flow)
-        
+
         # Photo adjustment
         if not self.disable_photo:
-            photo_delta = self.reconstruct_photo_delta(b, device)
+            photo_delta = self.reconstruct_photo_delta(b, device, face_mask)
             y = y + photo_delta
             y = y.clamp(0.0, 1.0)
 
