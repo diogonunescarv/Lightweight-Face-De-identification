@@ -13,6 +13,15 @@ Formato sugerido por entrada:
 
 ---
 
+## 2026-08-30 — Comparação de regiões de máscara (8 runs + baseline)
+Contexto: isolar o efeito da região de transformação mantendo hiperparâmetros idênticos a `mid_combo_amp20_flow45_nopx` (DT-CWT, flow 4.5 px, amp 0.20, lambda-id 15, target-cos 0.12, 5000 steps). Baseline **reaproveitado sem retreino** (`--mask-mode fixed`, elipse completa centrada). Runs novos com `--mask-mode landmarks` e `--mask-regions` variando (8 configs). Scripts: `run_mask_comparison.sh`, `compare_mask_regions.sh`.
+Decisão: para desidentificação efetiva, a transformação precisa cobrir praticamente toda a face — máscaras parciais preservam sinal de identidade fora da região mascarada e o embedder (FaceNet) continua reconhecendo a pessoa.
+Resultado (LFW test, 200 imgs):
+- **Melhor trade-off cos × ssim entre máscaras completas:** `full-landmarks` (cos=0.423, euclid=1.074, ssim=0.817) vs baseline fixo `mid_combo_amp20_flow45_nopx` (cos=0.456, euclid=1.026, ssim=0.817). A versão landmark-based cobre a face de forma anatômica e desidentifica ligeiramente melhor que a elipse fixa antiga, com SSIM equivalente — **`full-landmarks` é a contraparte nova comparável ao baseline.**
+- **Regiões parciais falham em desidentificar:** olhos (cos=0.874), boca (0.971), nariz (0.958) — cos >> 0.2, apesar de SSIM alto (0.87–0.90). Combinações parciais melhoram pouco (melhor parcial: eyes+mouth+nose, cos=0.753, ssim=0.852).
+- **Observações qualitativas** (previews em `/mnt/study-data/dcarvalho/metrics/mask_regions/`): regiões parciais concentram artefatos só na área mascarada (olhos/boca/nariz), deixando pele e contorno intactos — visualmente a face parece quase original fora da elipse. Máscara completa (fixed ou landmarks) distribui a perturbação por toda a região facial; diferença visual entre fixed e full-landmarks é sutil (contorno da elipse landmark segue IOD), mas métricas confirmam vantagem numérica de full-landmarks.
+- Nenhum run atingiu cos < 0.2 com ssim > 0.85; objetivo `--target-cos 0.12` permanece distante — região de máscara não era o gargalo principal (baseline full já tinha cos≈0.46).
+
 ## 2026-08-28 — Máscaras dinâmicas por landmarks
 Contexto: comparar efeito da região de transformação (olhos, nariz, boca, face) sem alterar pesos do modelo.
 Decisão: módulo `models/masks.py` com elipses suaves proporcionais à distância interocular (IOD = ||RE−LE||). União por região via `max`. CLI: `--mask-mode fixed|landmarks` (default `fixed`, elipse centrada atual) e `--mask-regions eyes,nose,mouth,full`. Detecção on-the-fly via SCRFD quando `landmarks`; fallback para elipse fixa se detecção falhar.
