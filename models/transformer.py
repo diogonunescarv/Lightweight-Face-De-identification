@@ -89,6 +89,7 @@ class LightweightDeIdentifier(nn.Module):
         use_face_mask: bool = True,
         mask_mode: str = "fixed",
         mask_regions: tuple[str, ...] = ("full",),
+        mask_shape: str = "ellipse",
         disable_dct: bool = False,            # desabilita transformada espectral (DCT ou wavelet)
         disable_flow: bool = False,
         disable_photo: bool = False,
@@ -112,6 +113,7 @@ class LightweightDeIdentifier(nn.Module):
         self.use_face_mask = use_face_mask
         self.mask_mode = mask_mode
         self.mask_regions = mask_regions
+        self.mask_shape = mask_shape
 
         self.disable_dct = disable_dct
         self.disable_flow = disable_flow

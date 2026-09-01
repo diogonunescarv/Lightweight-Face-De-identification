@@ -59,6 +59,7 @@ def ssim_index_masked(x: torch.Tensor, y: torch.Tensor, mask: torch.Tensor,
     SSIM médio apenas na região indicada pela máscara.
     x, y: [B, C, H, W] em [0,1]
     mask: [B, 1, H, W] ou [1, 1, H, W] com valores em [0,1].
+          Pode ser independente da máscara de transformação (ex.: escopo SSIM).
     Retorna [B].
     """
     c = x.shape[1]

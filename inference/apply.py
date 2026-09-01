@@ -18,6 +18,7 @@ def apply_transform(args):
     landmark_detector = None
     mask_mode = getattr(args, "mask_mode", None)
     mask_regions = getattr(args, "mask_regions", None)
+    mask_shape = getattr(args, "mask_shape", None)
     effective_mode = mask_mode or transformer.mask_mode
     if effective_mode == "landmarks" and transformer.use_face_mask:
         from models.face_detector import get_default_detector
@@ -47,6 +48,7 @@ def apply_transform(args):
             device,
             mask_mode=mask_mode,
             mask_regions=mask_regions,
+            mask_shape=mask_shape,
             detector=landmark_detector,
         )
 

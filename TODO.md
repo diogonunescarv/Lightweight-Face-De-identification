@@ -92,7 +92,7 @@ Referencie este arquivo com `@TODO.md` ao iniciar uma tarefa no Cursor.
   
   ⚠️ São 8 treinos completos (custo de GPU/tempo real). Não deixe o agente disparar os runs automaticamente — peça os scripts prontos, revise os comandos, e execute/confirme cada run manualmente.
 
-- [ ] **6. Implementar máscaras em faixa (banda) por região e validar em notebook**
+- [x] **6. Implementar máscaras em faixa (banda) por região e validar em notebook**
   Contexto: as máscaras atuais (tarefa 3, elipses ao redor dos landmarks) parecem cobrir uma área pequena demais — suspeita de que isso está limitando a eficácia da desidentificação. Quero uma nova forma de máscara em "faixa" (banda/retângulo largo ao redor da região, não só um círculo justo no ponto), cobrindo mais área ao redor de cada região e suas combinações. As máscaras elípticas atuais (tarefa 3) NÃO devem ser removidas nem alteradas — a nova forma é adicionada ao lado da existente, selecionável via CLI. Regiões/combinações (mesmas da tarefa 3, agora em formato faixa): eyes, nose, mouth, eyes+nose, eyes+mouth, nose+mouth, eyes+nose+mouth.
   
   Critério de pronto:
@@ -104,7 +104,7 @@ Referencie este arquivo com `@TODO.md` ao iniciar uma tarefa no Cursor.
   Arquivos prováveis: models/masks.py (estendido, não substituído), deid_optimize.py (nova flag), notebooks/mask_bands_validation.ipynb (novo)
   Depende de: tarefa 3
 
-- [ ] **7. Treinar modelos com máscaras em faixa e comparar (hiperparâmetros fixos)**
+- [x] **7. Treinar modelos com máscaras em faixa e comparar (hiperparâmetros fixos)**
   Contexto: com --mask-shape band validado visualmente (tarefa 6), repetir o mesmo processo de comparação da tarefa 5, agora para a forma faixa, para verificar se a cobertura maior melhora a desidentificação (cos/euclid) sem destruir a qualidade (ssim). Mesmos hiperparâmetros base da tarefa 5, variando --mask-shape band e --mask-regions pelas 7 regiões/combinações. Dois scripts novos, seguindo o mesmo padrão de scripts/run_mask_comparison.sh e scripts/compare_mask_regions.sh (tarefa 5):
 
   **scripts/run_mask_band_comparison.sh**
@@ -128,15 +128,79 @@ Referencie este arquivo com `@TODO.md` ao iniciar uma tarefa no Cursor.
   
   ⚠️ São 7 treinos completos (custo de GPU/tempo real). Não deixe o agente disparar os runs automaticamente — peça os scripts prontos, revise os comandos, e execute/confirme cada run manualmente.
 
-- [ ] **8. Notebook de comparação final: imagens com máscaras + resultados (elipse vs. faixa)**
-  Contexto: depois dos treinos das tarefas 5 e 7, quero um notebook único que junte visualização e métricas para facilitar a análise geral e o material para relatórios/dissertação.
+- [x] **8. Tornar a região do SSIM configurável (full-landmarks vs. máscara atual)**
+  Contexto: hoje o SSIM da loss é calculado sobre a região da máscara ativa no momento (--mask-regions/--mask-shape), o que torna as comparações entre experimentos com máscaras diferentes injustas — um experimento com máscara pequena (ex.: só olhos) tem o SSIM medido só nos olhos, enquanto um com máscara cheia é medido no rosto todo. Preciso de dois comportamentos selecionáveis por flag, decididos ANTES do treino:
+    1. Padrão: SSIM calculado sobre a região da máscara "full" montada a partir dos landmarks (independente de qual máscara está sendo treinada/usada na transformação)
+    2. Opcional: SSIM calculado sobre a mesma região da máscara em uso naquele treino (comportamento atual)
   Critério de pronto:
-    - notebook novo (ex.: notebooks/mask_shape_comparison_report.ipynb), reusando models/masks.py e models/face_detector.py
-    - gera grid de imagens por região comparando: original | elipse | faixa (reusa/estende a lógica de notebooks/mask_bands_validation.ipynb da tarefa 6, mas agora com os checkpoints treinados, não só a máscara)
-    - lê EXPERIMENTS.md (ou os summary_all.csv das tarefas 5 e 7) e monta uma tabela/gráfico único comparando cos/euclid/ssim por região e por forma (ellipse vs. band)
-    - salva figuras em disco (ex. notebooks/outputs/) para reuso na dissertação
-  Arquivos prováveis: notebooks/mask_shape_comparison_report.ipynb (novo)
-  Depende de: tarefas 5 e 7
+    - nova flag de CLI (ex.: --ssim-region full-landmarks|mask, default "full-landmarks" — ATENÇÃO: isso muda o comportamento padrão em relação ao que já foi treinado até aqui; ver nota abaixo)
+    - losses/losses.py e training/trainer.py ajustados para computar o SSIM sobre a região selecionada, desacoplado da região usada para a transformação/demais losses (identity, wavelet, etc., que continuam restritas à máscara escolhida em --mask-regions/--mask-shape)
+    - teste rápido: treinar poucos steps com --mask-regions eyes --ssim-region full-landmarks e confirmar (via log/inspeção) que o SSIM é computado sobre o rosto todo; repetir com --ssim-region mask e confirmar que fica restrito aos olhos (comportamento antigo)
+    - registrar em DECISIONS.md: motivação da mudança, novo default, e o caveat explícito de que TODOS os resultados em EXPERIMENTS.md gerados antes desta mudança (tarefas 5 e 7) usaram SSIM restrito à máscara — não são diretamente comparáveis aos novos runs com --ssim-region full-landmarks (default).
+  Arquivos prováveis: losses/losses.py, training/trainer.py, deid_optimize.py (nova flag)
+  Depende de: tarefa 3
 
-- [ ] **9. Avaliar upgrade para landmarks densos (106 pts) se máscaras elípticas se mostrarem insuficientes**
+- [x] **9. Re-treinar um subconjunto de máscaras com --ssim-region full-landmarks (SSIM corrigido)**
+  Contexto: com --ssim-region implementado (tarefa 8), quero re-treinar um subconjunto representativo usando o escopo correto de SSIM (rosto todo, via landmarks) — não é uma comparação entre os dois escopos, é a correção do comportamento anterior (SSIM restrito à máscara) nesses casos:
+    1. mid_combo_amp20_flow45__mask-full-landmarks
+    2. mid_combo_amp20_flow45__mask-eyes+mouth+nose
+    3. mid_combo_amp20_flow45__maskband-eyes
+    4. mid_combo_amp20_flow45__maskband-eyes+mouth
+    5. mid_combo_amp20_flow45__maskband-eyes+nose+mouth 
+  Todos os runs usam --ssim-region full-landmarks. Nenhum run deve usar --ssim-region mask (essa variante não deve ser treinada nesta tarefa).
+  Otimização de custo:
+    - Caso 1 (full-landmarks): quando a máscara já é o rosto todo, --ssim-region full-landmarks é equivalente ao comportamento antigo — NÃO retreinar; reaproveitar o checkpoint já existente da tarefa 5.
+    - Casos 2–5: retreinar, pois o comportamento anterior (SSIM restrito à máscara) é diferente do novo default. 4 runs novos no total.
+  Dois scripts novos, seguindo o mesmo padrão de scripts/run_mask_comparison.sh e scripts/compare_mask_regions.sh (tarefa 5):
+  **scripts/run_ssim_fix_retrain.sh**
+    - treina apenas os 4 runs novos, cada um com os mesmos hiperparâmetros base + --mask-shape/--mask-regions do caso original correspondente + --ssim-region full-landmarks:
+        mid_combo_amp20_flow45__mask-eyes+mouth+nose__ssim-fixed
+        mid_combo_amp20_flow45__maskband-eyes__ssim-fixed
+        mid_combo_amp20_flow45__maskband-eyes+mouth__ssim-fixed
+        mid_combo_amp20_flow45__maskband-eyes+nose+mouth__ssim-fixed
+  **scripts/compare_ssim_fix.sh**
+    - array EXPERIMENTS com 5 entradas: o baseline full-landmarks (reaproveitado, caso 1) + os 4 runs novos (casos 2–5)
+    - gera summary_all.csv consolidado, com coluna indicando região e forma (ellipse/band)
+  Critério de pronto:
+    - os dois scripts criados, seguindo exatamente os padrões da tarefa 5
+    - os 4 runs novos completados
+    - summary_all.csv com as 5 entradas
+    - linhas dos casos 2–5 em EXPERIMENTS.md atualizadas/substituídas pelos novos resultados (deixando claro que superam os valores antigos medidos com SSIM restrito à máscara — não são um ponto de comparação adicional, são a correção)
+    - eu rodo os treinos e o script de comparação manualmente, e envio o resultado (summary_all.csv) para você
+    - ao receber o resultado: atualizar EXPERIMENTS.md e adicionar entrada em DECISIONS.md explicando que esses 4 resultados substituem os equivalentes das tarefas 5/7 (SSIM agora medido sobre o rosto todo via landmarks, não mais restrito à máscara), e marcar este item como [x] no TODO.md
+  Arquivos prováveis: scripts/run_ssim_fix_retrain.sh (novo),
+  scripts/compare_ssim_fix.sh (novo), EXPERIMENTS.md, DECISIONS.md
+  Depende de: tarefa 8
+  ⚠️ São 4 treinos completos (custo de GPU/tempo real). Não deixe o agente disparar os runs automaticamente — peça os scripts prontos, revise os comandos, e execute/confirme cada run manualmente.
+
+- [x] **10. Notebook de comparação final: imagens com máscaras + resultados (elipse vs. faixa)**
+  **Contexto:** após a conclusão dos treinos das tarefas 5, 7 e 9, preciso de um notebook único que centralize a análise visual e quantitativa, facilitando a extração de conclusões para a dissertação e para apresentações. O notebook deve ser auto‑contido, reutilizar os módulos existentes e gerar material de alta qualidade (figuras, tabelas, métricas).
+  **Requisitos adicionais (além do já especificado no backlog):**
+  - Para cada região/combinação, exibir **três colunas** lado a lado:
+    1. **Imagem original** (com anotação dos landmarks para referência).
+    2. **Máscara utilizada** (elipse ou faixa, sobreposta à imagem original) – para que se veja claramente a área que está sendo modificada.
+    3. **Imagem transformada** (resultado da desidentificação) com a respectiva máscara aplicada.
+  - Abaixo de cada trio, incluir um **painel de métricas** (cosine, euclidean, SSIM) **e o tempo de inferência** (em ms) daquele exemplo, para que se possa correlacionar visualmente qualidade e desempenho.
+  - Incluir **visualizações agregadas** (gráficos de barras/radar) comparando as formas (elipse vs. faixa) para cada região, destacando os valores corrigidos da tarefa 9 (SSIM sobre a máscara `full-landmarks`) e, quando não disponíveis, os valores originais das tarefas 5/7.
+  - O notebook deve ser **reprodutível** e bem comentado, com células que expliquem cada etapa (carregamento dos checkpoints, aplicação da transformação, cálculo de métricas e geração das figuras).
+  - **Não salvar** figuras em `notebooks/outputs/`; utilizar os mesmos padrões de caminho dos scripts anteriores (ex.: `/mnt/study-data/dcarvalho/tests/final_comparison/` ou `/mnt/study-data/dcarvalho/metrics/final_report/`). O caminho exato deve ser verificado olhando os `OUTPUT_BASE` usados nas tarefas 5, 7 e 9.
+
+  **Critério de pronto:**
+  - Notebook criado (`notebooks/mask_shape_comparison_report.ipynb`), reusando `models/masks.py` e `models/face_detector.py` (não duplicar lógica).
+  - Gera grids de imagens por região, com as três colunas (original, máscara, transformada) para **ambas as formas** (elipse e faixa), sempre que houver checkpoint disponível.
+  - Lê os `summary_all.csv` gerados pelas tarefas 5, 7 e 9 (ou diretamente `EXPERIMENTS.md`) e monta uma **tabela única** consolidada com:
+    - Região
+    - Forma (elipse/faixa)
+    - Cos médio, Euclid médio, SSIM médio
+    - Tempo de inferência médio (ms)
+    - Número de imagens avaliadas
+  - Gera **gráficos comparativos** (barras agrupadas) para cada métrica, separando os valores corrigidos (tarefa 9) dos demais, com legenda clara.
+  - Gera **exemplos individuais** (pelo menos 2 imagens por região) que serão salvos como PNG em alta resolução para uso em slides, com anotações das métricas.
+  - O notebook **não salva** arquivos dentro de `notebooks/outputs/`; segue o padrão já utilizado (ex.: `/mnt/study-data/dcarvalho/tests/final_comparison/`). O caminho é definido no início do notebook, com uma célula de configuração que permite ajuste fácil.
+  - Ao final, o notebook deve **imprimir um resumo** das principais conclusões (ex.: "A faixa supera a elipse em SSIM para regiões com olhos, mas com leve piora no cos") para facilitar a redação da dissertação.
+
+  **Arquivos prováveis:** `notebooks/mask_shape_comparison_report.ipynb` (novo)
+  **Depende de:** tarefas 5, 7 e 9 (checkpoints e summaries gerados)
+
+- [ ] **11. Avaliar upgrade para landmarks densos (106 pts) se máscaras elípticas se mostrarem insuficientes**
   Contexto: só abrir esta se a avaliação visual da tarefa 3/4 mostrar que elipses grosseiras prejudicam a qualidade da desidentificação ou a credibilidade da figura na dissertação.

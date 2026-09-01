@@ -152,6 +152,7 @@ Todos os argumentos estão descritos abaixo.
 |------|--------|-----------|
 | `--target-cos` | `0.25` | Similaridade cosseno alvo para a perda de identidade (quanto menor, mais agressiva a desidentificação). |
 | `--tau-ssim` | `0.95` | Limiar de SSIM abaixo do qual aplicamos penalidade. |
+| `--ssim-region` | `full-landmarks` | Escopo do SSIM na loss: `full-landmarks` = elipse `full` via SCRFD (independente da máscara de treino); `mask` = mesma região de `--mask-regions`/`--mask-shape` (comportamento antigo). |
 | `--lambda-id` | `1.0` | Peso da perda de identidade. |
 | `--lambda-ssim` | `20.0` | Peso da perda de similaridade estrutural (SSIM). |
 | `--lambda-pixel` | `2.0` | Peso da perda L2 entre original e transformada. |
@@ -180,7 +181,8 @@ Todos os argumentos estão descritos abaixo.
 | `--max-photo-amp` | `0.035` | Amplitude máxima do ajuste fotométrico. |
 | `--no-face-mask` | (não ativado) | Se ativado, desabilita a máscara (a transformação afeta toda a imagem). |
 | `--mask-mode` | `fixed` | `fixed` = elipse centrada original; `landmarks` = máscaras por região SCRFD. |
-| `--mask-regions` | `full` | Regiões separadas por vírgula: `eyes`, `nose`, `mouth`, `full`. Só usado com `--mask-mode landmarks`. |
+| `--mask-shape` | `ellipse` | `ellipse` = elipses por landmark; `band` = faixa suave (unitária ou união). Só com `--mask-mode landmarks`. |
+| `--mask-regions` | `full` | Unitários: `eyes`, `nose`, `mouth`, `full` (`full` só com `ellipse`). Compostos `band` (união): `eyes-nose`, `eyes-mouth`, `nose-mouth`, `eyes-nose-mouth`. Híbrido: `eyes-nose-mouth-hybrid` (retângulos + elipse na boca). |
 
 ### Flags do agendador de taxa de aprendizado (scheduler)
 
@@ -362,7 +364,9 @@ python deid_optimize.py evaluate \
   --output-summary ./runs/deid_v1/eval_results.txt
 ```
 
-## Interpretando os resultados 
+## Interpretando os resultados
+
+**Escopo do SSIM:** por padrão (`--ssim-region full-landmarks`), o SSIM mede qualidade no rosto todo via landmarks, independente da máscara de transformação. Resultados em `EXPERIMENTS.md` anteriores a set/2026 usaram SSIM restrito à máscara de treino (`mask`) — compare SSIM entre experimentos só se o escopo for o mesmo.
 
 (REPENSAR SOBRE)
 

@@ -16,7 +16,13 @@ from PIL import Image
 from data.dataset import FaceImageFolder, tensor_to_pil
 from losses.losses import ssim_index_masked, identity_loss_ensemble
 from models.embedders import load_authorized_embedders
-from models.masks import resolve_face_mask_for_model
+from models.masks import (
+    detect_landmarks_batch,
+    parse_mask_regions,
+    resolve_face_mask_for_model,
+    resolve_ssim_mask,
+    resolve_ssim_region_for_eval,
+)
 from utils.checkpoint import load_transformer_from_checkpoint
 
 
@@ -33,17 +39,31 @@ def evaluate_single_model(
     max_visual_samples: int = 10,
     mask_mode: str | None = None,
     mask_regions: str | None = None,
+    mask_shape: str | None = None,
+    ssim_region: str | None = None,
 ) -> dict:
     device = torch.device(device)
     out_base = Path(output_file)
     out_base.parent.mkdir(parents=True, exist_ok=True)
+
+    ckpt = torch.load(checkpoint_path, map_location="cpu")
+    effective_ssim_region = resolve_ssim_region_for_eval(ssim_region, ckpt)
     
     model = load_transformer_from_checkpoint(checkpoint_path, device)
     embedders = load_authorized_embedders(device)
 
     landmark_detector = None
     effective_mode = mask_mode or model.mask_mode
-    if effective_mode == "landmarks" and model.use_face_mask:
+    if mask_regions is not None:
+        regions = parse_mask_regions(mask_regions)
+    else:
+        regions = model.mask_regions
+    shape = mask_shape or getattr(model, "mask_shape", "ellipse")
+
+    need_landmarks = model.use_face_mask and (
+        effective_mode == "landmarks" or effective_ssim_region == "full-landmarks"
+    )
+    if need_landmarks:
         from models.face_detector import get_default_detector
 
         landmark_detector = get_default_detector()
@@ -67,11 +87,15 @@ def evaluate_single_model(
     else:
         img_dir = None
     
-    print(f"Avaliando modelo: {checkpoint_path}")
+    print(f"Avaliando modelo: {checkpoint_path} (ssim_region={effective_ssim_region})")
     for x, paths in loader:
         if max_samples > 0 and total_images >= max_samples:
             break
         x = x.to(device)
+
+        landmarks_batch = None
+        if need_landmarks:
+            landmarks_batch = detect_landmarks_batch(paths, landmark_detector)
 
         face_mask = resolve_face_mask_for_model(
             model,
@@ -79,7 +103,9 @@ def evaluate_single_model(
             device,
             mask_mode=mask_mode,
             mask_regions=mask_regions,
+            mask_shape=mask_shape,
             detector=landmark_detector,
+            landmarks_batch=landmarks_batch,
         )
         
         # Medir tempo
@@ -102,8 +128,20 @@ def evaluate_single_model(
         mean_cos_batch = torch.stack(batch_cos).mean(dim=0)   # [B]
         euclid_batch = torch.sqrt(2.0 * (1.0 - mean_cos_batch))
         
-        # SSIM com máscara
-        ssim_vals = ssim_index_masked(x, y, face_mask)  # [B]
+        # SSIM no escopo configurado (independente da máscara de transformação)
+        ssim_mask = resolve_ssim_mask(
+            model,
+            paths,
+            device,
+            ssim_region=effective_ssim_region,
+            face_mask=face_mask,
+            mask_mode=effective_mode,
+            mask_regions=regions,
+            mask_shape=shape,
+            landmarks_batch=landmarks_batch,
+            detector=landmark_detector,
+        )
+        ssim_vals = ssim_index_masked(x, y, ssim_mask)
         
         # Armazenar resultados por imagem
         for i in range(x.size(0)):
@@ -155,6 +193,7 @@ def evaluate_single_model(
         "model": str(Path(checkpoint_path).name),
         "checkpoint": checkpoint_path,
         "n_images": total_images,
+        "ssim_region": effective_ssim_region,
         "cos_mean": float(torch.tensor(all_cos).mean()),
         "cos_std": float(torch.tensor(all_cos).std()),
         "euclid_mean": float(torch.tensor(all_euclid).mean()),
@@ -181,7 +220,7 @@ def evaluate_single_model(
     print(f"Resultados para {metrics['model']}")
     print(f"  Cosine similarity: {metrics['cos_mean']:.4f} ± {metrics['cos_std']:.4f}")
     print(f"  Euclidean distance: {metrics['euclid_mean']:.4f} ± {metrics['euclid_std']:.4f}")
-    print(f"  SSIM (masked): {metrics['ssim_mean']:.4f} ± {metrics['ssim_std']:.4f}")
+    print(f"  SSIM ({effective_ssim_region}): {metrics['ssim_mean']:.4f} ± {metrics['ssim_std']:.4f}")
     print(f"  Inference time (ms/img): {metrics['inference_time_ms_mean']:.2f} ± {metrics['inference_time_ms_std']:.2f}")
     print("="*50 + "\n")
     

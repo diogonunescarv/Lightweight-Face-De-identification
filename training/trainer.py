@@ -9,7 +9,14 @@ import torch.nn.functional as F
 
 from models.transformer import LightweightDeIdentifier
 from models.embedders import load_authorized_embedders
-from models.masks import parse_mask_regions, resolve_face_mask
+from models.masks import (
+    detect_landmarks_batch,
+    parse_mask_regions,
+    parse_mask_shape,
+    parse_ssim_region,
+    resolve_face_mask,
+    resolve_ssim_mask,
+)
 from data.dataset import FaceImageFolder, save_preview
 from losses.losses import identity_loss_ensemble, ssim_index_masked, pixel_l2_loss, total_variation_loss
 from utils.scheduler import WarmupScheduler
@@ -53,9 +60,16 @@ def train(args):
     embedders = load_authorized_embedders(device)
 
     mask_regions = parse_mask_regions(args.mask_regions)
+    mask_shape = parse_mask_shape(args.mask_shape)
+    ssim_region = parse_ssim_region(args.ssim_region)
     if args.mask_mode == "fixed" and args.mask_regions != "full":
         print(
             f"Aviso: --mask-regions={args.mask_regions} ignorado com --mask-mode fixed "
+            "(usa elipse centrada original)."
+        )
+    if args.mask_mode == "fixed" and mask_shape != "ellipse":
+        print(
+            f"Aviso: --mask-shape={mask_shape} ignorado com --mask-mode fixed "
             "(usa elipse centrada original)."
         )
 
@@ -75,17 +89,27 @@ def train(args):
         use_face_mask=not args.no_face_mask,
         mask_mode=args.mask_mode,
         mask_regions=mask_regions,
+        mask_shape=mask_shape,
         disable_dct=args.disable_dct,
         disable_flow=args.disable_flow,
         disable_photo=args.disable_photo,
     ).to(device)
 
     landmark_detector = None
-    if args.mask_mode == "landmarks" and not args.no_face_mask:
+    need_landmarks = (
+        not args.no_face_mask
+        and (args.mask_mode == "landmarks" or ssim_region == "full-landmarks")
+    )
+    if need_landmarks:
         from models.face_detector import get_default_detector
 
         landmark_detector = get_default_detector()
-        print(f"Máscaras por landmarks: regions={','.join(mask_regions)}")
+        if args.mask_mode == "landmarks":
+            print(
+                f"Máscaras por landmarks: shape={mask_shape} "
+                f"regions={','.join(mask_regions)}"
+            )
+    print(f"SSIM region: {ssim_region}")
 
     optimizer = torch.optim.Adam(transformer.parameters(), lr=args.lr)
 
@@ -125,6 +149,10 @@ def train(args):
 
             x = x.to(device)
 
+            landmarks_batch = None
+            if need_landmarks:
+                landmarks_batch = detect_landmarks_batch(_paths, landmark_detector)
+
             face_mask = resolve_face_mask(
                 transformer,
                 x.shape[0],
@@ -133,7 +161,9 @@ def train(args):
                 use_face_mask=not args.no_face_mask,
                 mask_mode=args.mask_mode,
                 mask_regions=mask_regions,
+                mask_shape=mask_shape,
                 detector=landmark_detector,
+                landmarks_batch=landmarks_batch,
             )
             y = transformer(x, face_mask=face_mask)
 
@@ -144,12 +174,19 @@ def train(args):
                 target_cos=args.target_cos,
             )
 
-            # SSIM SEM A MASCARA
-            #ssim = ssim_index(x, y)
-            #loss_ssim = F.relu(args.tau_ssim - ssim).mean()
-
-                        # Obtém a máscara facial
-            ssim_vals = ssim_index_masked(x, y, face_mask)
+            ssim_mask = resolve_ssim_mask(
+                transformer,
+                _paths,
+                device,
+                ssim_region=ssim_region,
+                face_mask=face_mask,
+                mask_mode=args.mask_mode,
+                mask_regions=mask_regions,
+                mask_shape=mask_shape,
+                landmarks_batch=landmarks_batch,
+                detector=landmark_detector,
+            )
+            ssim_vals = ssim_index_masked(x, y, ssim_mask)
             loss_ssim = F.relu(args.tau_ssim - ssim_vals).mean()
 
             #loss_pix = pixel_l2_loss(x, y)
@@ -241,6 +278,8 @@ def save_checkpoint(transformer: LightweightDeIdentifier, args, path: Path, step
         "use_face_mask": not args.no_face_mask,
         "mask_mode": args.mask_mode,
         "mask_regions": args.mask_regions,
+        "mask_shape": args.mask_shape,
+        "ssim_region": args.ssim_region,
         "transform_type": transformer.transform_type,
         "wavelet_J": transformer.wavelet_J,
         "max_wavelet_amp": transformer.max_wavelet_amp,

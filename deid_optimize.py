@@ -7,7 +7,19 @@ from training.trainer import train
 from inference.apply import apply_transform
 from evaluation.evaluate import evaluate
 from evaluation.evaluate_single import evaluate_single_model
-from models.masks import parse_mask_regions
+from models.masks import (
+    parse_mask_regions,
+    parse_mask_shape,
+    validate_mask_shape_regions,
+)
+
+
+_MASK_REGIONS_HELP = (
+    "Unitários: eyes,nose,mouth,full (full só com --mask-shape ellipse). "
+    "Compostos band (união das unitárias): eyes-nose,eyes-mouth,nose-mouth,eyes-nose-mouth. "
+    "Híbrido band: eyes-nose-mouth-hybrid (retângulos olhos+nariz + elipse na boca). "
+    "Vírgula = lista/união; hífen = token composto."
+)
 
 
 def add_mask_args(parser: argparse.ArgumentParser, *, for_train: bool = False) -> None:
@@ -19,9 +31,15 @@ def add_mask_args(parser: argparse.ArgumentParser, *, for_train: bool = False) -
             help="fixed=elipse centrada original; landmarks=máscaras por região SCRFD.",
         )
         parser.add_argument(
+            "--mask-shape",
+            default="ellipse",
+            choices=["ellipse", "band"],
+            help="ellipse=elipses por landmark; band=faixa/retângulo suave (default: ellipse).",
+        )
+        parser.add_argument(
             "--mask-regions",
             default="full",
-            help="Regiões separadas por vírgula: eyes,nose,mouth,full. Só usado com --mask-mode landmarks.",
+            help=_MASK_REGIONS_HELP + " Só usado com --mask-mode landmarks.",
         )
     else:
         parser.add_argument(
@@ -31,16 +49,41 @@ def add_mask_args(parser: argparse.ArgumentParser, *, for_train: bool = False) -
             help="Override do modo de máscara (default: metadados do checkpoint).",
         )
         parser.add_argument(
+            "--mask-shape",
+            default=None,
+            choices=["ellipse", "band"],
+            help="Override da forma de máscara (default: metadados do checkpoint).",
+        )
+        parser.add_argument(
             "--mask-regions",
             default=None,
-            help="Override das regiões (default: metadados do checkpoint).",
+            help="Override das regiões (default: metadados do checkpoint). " + _MASK_REGIONS_HELP,
         )
 
 
-def validate_mask_regions_arg(args) -> None:
+def add_ssim_region_arg(parser: argparse.ArgumentParser, *, for_train: bool = False) -> None:
+    parser.add_argument(
+        "--ssim-region",
+        default="full-landmarks" if for_train else None,
+        choices=["full-landmarks", "mask"],
+        help=(
+            "Escopo do SSIM: full-landmarks=elipse full via SCRFD; "
+            "mask=mesma região de --mask-regions/--mask-shape. "
+            + ("Default: full-landmarks." if for_train else "Default: metadado do checkpoint ou mask (legado).")
+        ),
+    )
+
+
+def validate_mask_args(args) -> None:
     spec = getattr(args, "mask_regions", None)
+    shape = getattr(args, "mask_shape", None)
+    regions = None
     if spec is not None:
-        parse_mask_regions(spec)
+        regions = parse_mask_regions(spec)
+    if shape is not None:
+        parse_mask_shape(shape)
+    if regions is not None and shape is not None:
+        validate_mask_shape_regions(shape, regions)
 
 def build_parser():
     parser = argparse.ArgumentParser(
@@ -77,6 +120,7 @@ def build_parser():
 
     p_train.add_argument("--target-cos", type=float, default=0.25)
     p_train.add_argument("--tau-ssim", type=float, default=0.95)
+    add_ssim_region_arg(p_train, for_train=True)
 
     p_train.add_argument("--lambda-id", type=float, default=1.0)
     p_train.add_argument("--lambda-ssim", type=float, default=20.0)
@@ -147,6 +191,7 @@ def build_parser():
     p_evaluate.add_argument("--output-summary", type=str, default=None,
                             help="Opcional: caminho para salvar um resumo em CSV/txt")
     add_mask_args(p_evaluate)
+    add_ssim_region_arg(p_evaluate)
 
     
 
@@ -164,6 +209,7 @@ def build_parser():
     p_eval_single.add_argument("--save-images", action="store_true", help="Salvar imagens transformadas")
     p_eval_single.add_argument("--max-visual-samples", type=int, default=10, help="Nº máximo de imagens visuais")
     add_mask_args(p_eval_single)
+    add_ssim_region_arg(p_eval_single)
 
     return parser
 
@@ -173,16 +219,16 @@ def main():
     args = parser.parse_args()
 
     if args.mode == "train":
-        validate_mask_regions_arg(args)
+        validate_mask_args(args)
         train(args)
     elif args.mode == "apply":
-        validate_mask_regions_arg(args)
+        validate_mask_args(args)
         apply_transform(args)
     elif args.mode == "evaluate":
-        validate_mask_regions_arg(args)
+        validate_mask_args(args)
         evaluate(args)
     elif args.mode == "evaluate-single":
-        validate_mask_regions_arg(args)
+        validate_mask_args(args)
         evaluate_single_model(
             checkpoint_path=args.checkpoint,
             data_dir=args.data,
@@ -195,6 +241,8 @@ def main():
             max_visual_samples=args.max_visual_samples,
             mask_mode=args.mask_mode,
             mask_regions=args.mask_regions,
+            mask_shape=args.mask_shape,
+            ssim_region=args.ssim_region,
         )
     else:
         raise RuntimeError(f"Modo desconhecido: {args.mode}")

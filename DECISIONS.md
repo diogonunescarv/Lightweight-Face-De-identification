@@ -11,14 +11,56 @@ Formato sugerido por entrada:
 
 ---
 
----
+## 2026-09-01 — Região do SSIM configurável (`--ssim-region`)
+Contexto: o SSIM da loss era calculado sobre a mesma máscara da transformação (`--mask-regions`/`--mask-shape`), tornando comparações entre experimentos com máscaras parciais injustas — ex.: `mask-eyes` media SSIM só nos olhos, enquanto `mask-full-landmarks` media no rosto todo.
+Decisão: nova flag `--ssim-region full-landmarks|mask` (default `full-landmarks` no treino). A loss de SSIM usa máscara independente (`resolve_ssim_mask` em `models/masks.py`): `full-landmarks` = elipse `full` via SCRFD (sempre `ellipse`, independente de `--mask-shape`); `mask` = comportamento antigo. Identity, wavelet, flow e photo continuam restritos à máscara de treino. Metadado `ssim_region` salvo no checkpoint; `state_dict` inalterado.
+Resultado:
+- **Checkpoints antigos** continuam carregando; na avaliação sem flag, checkpoints sem `ssim_region` usam `mask` (legado) com aviso.
+- **Equivalente ao comportamento antigo** (não precisa re-treino por escopo SSIM): `mask-full-landmarks` (máscara de treino = full); aproximadamente `mid_combo_amp20_flow45_nopx` (elipse fixa ≈ full face).
+- **SSIM em EXPERIMENTS.md (tarefas 5 e 7) medido com escopo `mask`** — não comparável diretamente a novos runs com default `full-landmarks`. Tarefa 9 re-treina 4 casos representativos com escopo corrigido.
+- Validação: treino rápido `--mask-regions eyes` com `full-landmarks` vs `mask` deve mostrar SSIM menor no primeiro (mede área não perturbada fora dos olhos).
+
+## 2026-08-31 — Comparação elipse vs. faixa (7 runs band + elipse reaproveitada)
+Contexto: elipses unitárias (tarefa 5) cobriam área pequena; tarefa 6 adicionou `--mask-shape band` (faixas soft-rect proporcionais ao IOD, compostos = união das unitárias). Tarefa 7 treinou 7 configs band com hiperparâmetros idênticos à tarefa 5. Elipse reaproveitada da tarefa 5 (não retreinada). Scripts: `run_mask_band_comparison.sh`, `compare_mask_band_regions.sh`.
+Decisão: **faixa melhora desidentificação em todas as regiões/combinações testadas**, especialmente quando duas ou mais regiões são unidas — a maior cobertura expõe mais pixels à perturbação e reduz o sinal de identidade preservado fora da máscara.
+Resultado (LFW test, 200 imgs; faixa vs. elipse por região):
+| Região | cos band | cos ellipse | ssim band | ssim ellipse | Vencedor trade-off |
+|--------|----------|-------------|-----------|--------------|-------------------|
+| eyes | 0.728 | 0.872 | 0.861 | 0.866 | **band** (Δcos −0.14, ssim ≈) |
+| nose | 0.926 | 0.959 | 0.889 | 0.896 | **band** (Δcos −0.03, ssim ≈) |
+| mouth | 0.890 | 0.972 | 0.884 | 0.902 | **band** (Δcos −0.08, ssim −0.02) |
+| eyes+mouth | 0.469 | 0.817 | 0.811 | 0.863 | **band** (Δcos −0.35; ssim cai abaixo de 0.85) |
+| eyes+nose | 0.660 | 0.809 | 0.848 | 0.855 | **band** (Δcos −0.15, ssim ≈) |
+| nose+mouth | 0.796 | 0.911 | 0.878 | 0.891 | **band** (Δcos −0.12, ssim −0.01) |
+| eyes+nose+mouth | 0.485 | 0.761 | 0.825 | 0.853 | **band** (Δcos −0.28, ssim −0.03) |
+
+- **Melhor resultado band:** `eyes+mouth` (cos=0.469, euclid=1.012, ssim=0.811) — desidentificação comparável ao baseline fixo (cos=0.456) e próxima de `full-landmarks` (cos=0.411), mas com SSIM abaixo do limiar 0.85. Segundo: `eyes+nose+mouth` (cos=0.485, ssim=0.825).
+- **Regiões unitárias isoladas continuam insuficientes** mesmo em band (cos > 0.73 para olhos; > 0.89 para boca/nariz).
+- **Observações qualitativas** (previews em `/mnt/study-data/dcarvalho/metrics/mask_band_regions/`): faixas concentram artefatos em retângulos mais largos (olhos = faixa horizontal sobre sobrancelhas/pálpebras; boca/nariz = faixas verticais mais contidas após ajuste da tarefa 6). Compostos band cobrem faixa T superior + nariz + boca sem extrapolar para contorno da face — visualmente a perturbação ocupa mid-face, explicando o ganho de cos. Elipse deixa pele intacta nas bordas das faixas; band preenche os “vãos” entre regiões adjacentes quando combinadas.
+- **Conclusão prática:** preferir `--mask-shape band` para combinações (eyes+mouth, eyes+nose+mouth); para cobertura facial completa, `full-landmarks` (ellipse) ainda oferece melhor equilíbrio cos×ssim (cos=0.411, ssim=0.818 vs. cos=0.469, ssim=0.811 de eyes+mouth band).
+
+## 2026-08-31 — Ajuste fino das máscaras band (após revisão visual)
+Contexto: validação em `mask_bands_view` — `full` band extrapolava demais; nariz invadia a boca; boca grande; compostos AABB (`eyes-mouth`) ficavam quase mid-face inteiro.
+Decisão:
+- **Removido** `full` em `--mask-shape band` (erro explícito; `full` permanece só no path ellipse).
+- Eyes: faixa assimétrica hw=0.90·IOD, hh_up=0.42, hh_down=0.28 (menos extensão inferior).
+- Nose: ancorado em landmarks — topo ≈ mid-olhos+0.18·IOD, base = nariz+0.28·(boca−nariz), hw=0.30·IOD (não chega à boca).
+- Mouth: hw=0.55 / hh=0.28 ·IOD (menor).
+- Compostos com hífen = **união (`max`) das unitárias band** (não AABB).
+- Novo token `eyes-nose-mouth-hybrid`: max(eyes_rect, nose_rect, mouth_ellipse).
+Resultado: regenerar figuras no notebook; a validar visualmente antes do item 7.
+
+## 2026-08-31 — Máscaras em faixa (band) + compostos (versão inicial)
+Contexto: elipses por landmark (tarefa 3) cobriam área pequena demais; item 6 pede faixas selecionáveis via CLI sem remover elipses.
+Decisão (inicial, depois ajustada na entrada acima): `--mask-shape ellipse|band`; path elipse intacto; band = soft-rect L∞ por IOD; `mask_shape` no checkpoint.
+Resultado: implementação base + notebook; paddings AABB iniciais rejeitados na revisão visual e substituídos pela união das unitárias.
 
 ## 2026-08-30 — Comparação de regiões de máscara (8 runs + baseline)
 Contexto: isolar o efeito da região de transformação mantendo hiperparâmetros idênticos a `mid_combo_amp20_flow45_nopx` (DT-CWT, flow 4.5 px, amp 0.20, lambda-id 15, target-cos 0.12, 5000 steps). Baseline **reaproveitado sem retreino** (`--mask-mode fixed`, elipse completa centrada). Runs novos com `--mask-mode landmarks` e `--mask-regions` variando (8 configs). Scripts: `run_mask_comparison.sh`, `compare_mask_regions.sh`.
 Decisão: para desidentificação efetiva, a transformação precisa cobrir praticamente toda a face — máscaras parciais preservam sinal de identidade fora da região mascarada e o embedder (FaceNet) continua reconhecendo a pessoa.
 Resultado (LFW test, 200 imgs):
-- **Melhor trade-off cos × ssim entre máscaras completas:** `full-landmarks` (cos=0.423, euclid=1.074, ssim=0.817) vs baseline fixo `mid_combo_amp20_flow45_nopx` (cos=0.456, euclid=1.026, ssim=0.817). A versão landmark-based cobre a face de forma anatômica e desidentifica ligeiramente melhor que a elipse fixa antiga, com SSIM equivalente — **`full-landmarks` é a contraparte nova comparável ao baseline.**
-- **Regiões parciais falham em desidentificar:** olhos (cos=0.874), boca (0.971), nariz (0.958) — cos >> 0.2, apesar de SSIM alto (0.87–0.90). Combinações parciais melhoram pouco (melhor parcial: eyes+mouth+nose, cos=0.753, ssim=0.852).
+- **Melhor trade-off cos × ssim entre máscaras completas:** `full-landmarks` (cos=0.411, euclid=1.068, ssim=0.818) vs baseline fixo `mid_combo_amp20_flow45_nopx` (cos=0.456, euclid=1.026, ssim=0.817). A versão landmark-based cobre a face de forma anatômica e desidentifica ligeiramente melhor que a elipse fixa antiga, com SSIM equivalente — **`full-landmarks` é a contraparte nova comparável ao baseline.**
+- **Regiões parciais falham em desidentificar:** olhos (cos=0.872), boca (0.972), nariz (0.959) — cos >> 0.2, apesar de SSIM alto (0.87–0.90). Combinações parciais melhoram pouco (melhor parcial: eyes+mouth+nose, cos=0.761, ssim=0.853).
 - **Observações qualitativas** (previews em `/mnt/study-data/dcarvalho/metrics/mask_regions/`): regiões parciais concentram artefatos só na área mascarada (olhos/boca/nariz), deixando pele e contorno intactos — visualmente a face parece quase original fora da elipse. Máscara completa (fixed ou landmarks) distribui a perturbação por toda a região facial; diferença visual entre fixed e full-landmarks é sutil (contorno da elipse landmark segue IOD), mas métricas confirmam vantagem numérica de full-landmarks.
 - Nenhum run atingiu cos < 0.2 com ssim > 0.85; objetivo `--target-cos 0.12` permanece distante — região de máscara não era o gargalo principal (baseline full já tinha cos≈0.46).
 
