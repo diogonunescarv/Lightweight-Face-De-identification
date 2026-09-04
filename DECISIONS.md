@@ -11,6 +11,62 @@ Formato sugerido por entrada:
 
 ---
 
+## 2026-09-04 — Top-3 HP da busca vs base fixa (item 16)
+Contexto: busca Optuna (tarefa 14) encontrou trials com score > baseline curto; falta treino completo e comparação justa com `mid_combo_amp20_flow45_nopx` antes de trocar a base dos próximos experimentos de máscara.
+Decisão:
+- Scripts: `scripts/run_best_hparams.sh` e `scripts/compare_best_hparams.sh`.
+- Treinar só os top 3: trial26 / trial25 / trial28 (nomes `hparam_search__trial*`).
+- Flags fixos = comando sugerido pela tarefa 14; variam só lr, lambda-id, max-flow-px, tau-ssim, lambda-ssim.
+- Máscara `fixed` (default) + `--ssim-region full-landmarks` — comparável ao baseline nopx.
+- Baseline `mid_combo_amp20_flow45_nopx` só reavaliado (não retreinado).
+- Outputs: `/mnt/study-data/dcarvalho/tests/best_hparams/` e `/mnt/study-data/dcarvalho/metrics/best_hparams/summary_all.csv`.
+Resultado (evaluate-single, 200 imgs, full-landmarks; score = ssim−cos):
+- **Melhor score:** trial25 (score=0.444; cos=0.356, ssim=0.800), seguido de trial26 (0.442; cos=0.360, ssim=0.802) e trial28 (0.437; cos=0.379, ssim=0.816). Baseline nopx: score=0.406 (cos=0.456, ssim=0.862).
+- Os 3 trials **superam a base em score e cos**, mas **caem o SSIM para ~0.80–0.82** (abaixo do limiar prático 0.85; baseline fica em 0.862).
+- Early stopping: pararam em 1800–2000 steps (best ~1500–1700), bem abaixo do teto 5000.
+- **Não substitui** `mid_combo_amp20_flow45` como base padrão para comparações de máscara (tarefas futuras no estilo 5/7/9): a qualidade perceptual piora demais. Os HP otimizados ficam como variante **agressiva** (quando o objetivo for maximizar score/cos). Tarefas 5/7/9 **não** são invalidadas.
+- Se no futuro priorizar só desidentificação (aceitando ssim≈0.80), partir do trial25.
+
+## 2026-09-03 — Re-treino SSIM-fixed com early stopping (item 15)
+Contexto: tarefa 9 treinou 4 máscaras com `--ssim-region full-landmarks` e `--steps 5000` fixos (sem early stopping). Com a tarefa 13 disponível, repetir os mesmos 4 casos com teto `--steps 10000` + early stopping para ver se cos/euclid/ssim se mantêm com menos (ou pelo menos ≤) custo de GPU.
+Decisão:
+- Scripts: `scripts/run_ssim_scope_earlystop.sh` e `scripts/compare_ssim_scope_earlystop.sh`.
+- Mesmos HP base da tarefa 9 + `--ssim-region full-landmarks`.
+- Early stopping: `--eval-every 100 --patience 3 --val-max-samples 200 --early-stopping-metric score` (alinhado à busca de HP).
+- Nomes com sufixo `__earlystop10000` (não sobrescreve `__ssim-fixed` da tarefa 9).
+- Outputs: `/mnt/study-data/dcarvalho/tests/ssim_scope_earlystop/` e `/mnt/study-data/dcarvalho/metrics/ssim_scope_earlystop/summary_all.csv` (só os 4 early-stop; comparação com tarefa 9 via EXPERIMENTS.md / metrics/ssim_scope).
+Resultado:
+- stopped / best / elapsed: eyes+nose+mouth ellipse 4300/4000/~1148s; maskband-eyes 3600/3300/~950s; maskband-eyes+mouth 4300/4000/~1145s; maskband-eyes+nose+mouth 4200/3900/~1223s. Todos `early_stopped=True`.
+- cos/euclid/ssim **equivalentes** à tarefa 9 (diferenças ≤ ~0.01); o caso band eyes+nose+mouth teve cos ligeiramente pior (0.446 vs 0.437).
+- Economia vs 5000 fixos: ~14–28% menos steps (parou ~3600–4300).
+- **Sim — early stopping deve virar padrão** nos próximos treinos de comparação de máscara (mesmo critério score, eval-every/patience alinhados à busca), com teto generoso (≥5000 ou 10000).
+
+## 2026-09-02 — Busca automática de hiperparâmetros (Optuna, item 14)
+Contexto: hiperparâmetros ajustados manualmente entre experimentos; base `mid_combo_amp20_flow45_nopx` fixada "na mão".
+Decisão:
+- Script `scripts/run_hparam_search.py` com Optuna (TPE + MedianPruner).
+- Espaço de busca v1: `--lr` log [2e-3, 2e-2], `--lambda-id` [5, 25], `--max-flow-px` [2, 6], `--tau-ssim` [0.85, 0.95], `--lambda-ssim` [10, 40].
+- Demais HP fixos (DT-CWT, wavelet, target-cos 0.12, lambda-pixel 6.0, etc.).
+- Trials curtos (--steps 1000 default) com early stopping; objetivo = score = ssim_mean - cos_mean.
+- CSV incremental `hparam_search_results.csv`; study SQLite `optuna_study.db`; wrapper `scripts/run_hparam_search.sh`.
+- `train()` retorna dict com métricas do melhor checkpoint (para caller programático).
+Resultado (study em `/mnt/study-data/dcarvalho/tests/hparam_search/`):
+- n_trials: 30 (22 complete, 8 pruned); steps/trial teto: 1000.
+- Melhor (trial 26): lr=0.0144483, lambda-id=22.78, max-flow-px=5.18, tau-ssim=0.922, lambda-ssim=21.2 → score=0.4345, cos=0.374, ssim=0.808.
+- Top-3: trial26 (0.4345), trial25 (0.4322), trial28 (0.4288) — promovidos ao treino completo (item 16).
+- **Não substitui** sozinho a base `mid_combo_amp20_flow45` (decisão final no item 16 após treino completo).
+
+## 2026-09-02 — Early stopping por métricas de validação (`--early-stopping`)
+Contexto: treinos fixos em 5000 steps desperdiçam GPU após convergência e não protegem contra piora nas últimas etapas (item 13).
+Decisão:
+- Validação periódica via `evaluation/validate.py` → `compute_validation_metrics` (mesmas métricas de `evaluate`: cos, euclid, ssim).
+- Score padrão: `score = ssim_mean - cos_mean` (maximizar). Alternativas: `--early-stopping-metric euclid|ssim|cos`.
+- CLI opt-in: `--early-stopping`, `--val-data` (obrigatório), `--eval-every 500`, `--patience 5`, `--val-max-samples 200`, `--early-stopping-min-delta 0`.
+- Melhor checkpoint em `transform_best.pt`; ao fim, `transform.pt` recebe os pesos do melhor step + metadados (`early_stopped`, `best_step`, `best_score`, `stopped_step`).
+- Log `val.csv` por run. Script de teste: `scripts/run_early_stopping_test.sh` (LFW, STEPS=500, 3 runs).
+- Default off — scripts existentes inalterados.
+Resultado (teste curto, STEPS=500): `early_stop__weak-hp` cos=0.753/ssim=0.925; `early_stop__base-hp` cos=0.577/ssim=0.861; `no_early_stop__baseline` cos=0.575/ssim=0.861. Nos runs curtos o teto 500 foi atingido (`early_stopped=False` no ckpt, best_step 400–450). Validação mais forte veio na tarefa 15 (paradas reais ~3600–4300 com teto 10000).
+
 ## 2026-09-01 — Região do SSIM configurável (`--ssim-region`)
 Contexto: o SSIM da loss era calculado sobre a mesma máscara da transformação (`--mask-regions`/`--mask-shape`), tornando comparações entre experimentos com máscaras parciais injustas — ex.: `mask-eyes` media SSIM só nos olhos, enquanto `mask-full-landmarks` media no rosto todo.
 Decisão: nova flag `--ssim-region full-landmarks|mask` (default `full-landmarks` no treino). A loss de SSIM usa máscara independente (`resolve_ssim_mask` em `models/masks.py`): `full-landmarks` = elipse `full` via SCRFD (sempre `ellipse`, independente de `--mask-shape`); `mask` = comportamento antigo. Identity, wavelet, flow e photo continuam restritos à máscara de treino. Metadado `ssim_region` salvo no checkpoint; `state_dict` inalterado.

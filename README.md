@@ -19,6 +19,7 @@ Este projeto implementa uma transformação facial leve para desidentificação 
 - [Avaliação de um modelo](#avaliação-de-um-modelo)
   - [Avaliação detalhada (com métricas e imagens)](#avaliação-detalhada-com-métricas-e-imagens)
   - [Avaliação resumida](#avaliação-resumida)
+- [Busca de hiperparâmetros](#busca-de-hiperparâmetros)
 - [Interpretando os resultados](#interpretando-os-resultados)
 - [Dicas para ajuste fino](#dicas-para-ajuste-fino)
 
@@ -143,7 +144,14 @@ Todos os argumentos estão descritos abaixo.
 | `--lr` | `0.001` | Taxa de aprendizado inicial (Adam). |
 | `--log-every` | `25` | A cada N passos, exibe e salva métricas. |
 | `--preview-every` | `100` | A cada N passos, salva uma imagem comparativa (original vs transformada). |
-| `--save-every` | `500` | A cada N passos, salva um checkpoint do modelo. |
+| `--save-every` | `500` | A cada N passos, salva um checkpoint do modelo (ignorado se `--early-stopping`). |
+| `--early-stopping` | (desativado) | Validação periódica + parada antecipada (requer `--val-data`). |
+| `--val-data` | — | Pasta de validação para early stopping. |
+| `--eval-every` | `500` | Intervalo em steps entre avaliações de validação. |
+| `--patience` | `5` | Avaliações consecutivas sem melhora antes de parar. |
+| `--val-max-samples` | `200` | Limite de imagens na validação durante treino (0 = todas). |
+| `--early-stopping-metric` | `score` | `score` (= ssim−cos, max), `euclid`/`ssim` (max), `cos` (min). |
+| `--early-stopping-min-delta` | `0.0` | Melhora mínima absoluta para contar como progresso. |
 | `--seed` | `42` | Semente para reprodutibilidade. |
 
 ### Flags de regularização e qualidade
@@ -363,6 +371,36 @@ python deid_optimize.py evaluate \
   --device cuda \
   --output-summary ./runs/deid_v1/eval_results.txt
 ```
+
+## Busca de hiperparâmetros
+
+Script Optuna para explorar combinações de `--lr`, `--lambda-id`, `--max-flow-px`, `--tau-ssim` e `--lambda-ssim` em treinos curtos com early stopping. Demais hiperparâmetros ficam fixos em torno de `mid_combo_amp20_flow45_nopx`. Cada trial maximiza `score = ssim_mean - cos_mean` (mesma métrica do early stopping).
+
+```bash
+python scripts/run_hparam_search.py \
+  --data /caminho/faces_train \
+  --val-data /caminho/faces_test \
+  --out ./runs/hparam_search \
+  --n-trials 30 --steps 1000 --device cuda --seed 42
+```
+
+Wrapper com paths LFW: `scripts/run_hparam_search.sh` (revisar `N_TRIALS`/`STEPS` antes de executar).
+
+| Flag | Default | Descrição |
+|------|---------|-----------|
+| `--data` | — | Pasta de treino (obrigatório). |
+| `--val-data` | — | Pasta de validação (obrigatório). |
+| `--out` | — | Diretório base; trials em `trial_NNNN/`, CSV e SQLite aqui. |
+| `--n-trials` | `30` | Número de trials Optuna. |
+| `--steps` | `1000` | Steps máximos por trial. |
+| `--eval-every` | `100` | Intervalo de validação por trial. |
+| `--patience` | `3` | Early stopping por trial. |
+| `--fresh` | (desativado) | Apaga `optuna_study.db` e recomeça do zero. |
+| `--resume` | (obsoleto) | Retomar é automático se o DB existir; flag mantida por compatibilidade. |
+
+Reexecução no mesmo `--out`: retoma trials pendentes até completar `--n-trials` no total. Use `--fresh` para apagar o study e iniciar outro.
+
+Saídas: `hparam_search_results.csv` (HP + métricas por trial), `optuna_study.db`, e ao final um comando `deid_optimize.py train ...` pronto para treino completo. Coluna `status`: `complete`, `pruned`, `failed`, `no_eval`.
 
 ## Interpretando os resultados
 

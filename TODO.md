@@ -202,5 +202,111 @@ Referencie este arquivo com `@TODO.md` ao iniciar uma tarefa no Cursor.
   **Arquivos prováveis:** `notebooks/mask_shape_comparison_report.ipynb` (novo)
   **Depende de:** tarefas 5, 7 e 9 (checkpoints e summaries gerados)
 
-- [ ] **11. Avaliar upgrade para landmarks densos (106 pts) se máscaras elípticas se mostrarem insuficientes**
+
+- [ ] **12. Avaliar upgrade para landmarks densos (106 pts) se máscaras elípticas se mostrarem insuficientes**
   Contexto: só abrir esta se a avaliação visual da tarefa 3/4 mostrar que elipses grosseiras prejudicam a qualidade da desidentificação ou a credibilidade da figura na dissertação.
+
+- [x] **13. Implementar early stopping baseado em métricas de validação**
+  Contexto: Atualmente, os treinos rodam por um número fixo de STEPS (ex.: 5000) independentemente de o modelo já ter convergido ou começado a piorar (overfitting na identidade ou degradação do SSIM). Isso desperdiça tempo de GPU em treinos que já estabilizaram, e não protege contra treinos que pioram nas últimas etapas. Quero adicionar early stopping monitorando uma métrica de validação calculada periodicamente durante o treino, parando automaticamente se não houver melhora após N avaliações consecutivas.
+
+  Critério de pronto:
+    - nova função/lógica em training/trainer.py que, a cada --eval-every steps, roda uma validação leve (subconjunto de DATA_VAL) e computa a métrica de referência (ex.: combinação de cos e ssim, ou a mesma métrica já usada em compare_mask_regions.sh — ajustar conforme o que já existe)
+    - nova(s) flag(s) de CLI: --early-stopping (bool, default False para não quebrar scripts existentes), --patience (int, nº de avaliações sem melhora antes de parar), --eval-every (int, intervalo de steps entre validações)
+    - ao acionar o early stopping, salvar o checkpoint correspondente à melhor métrica observada (não necessariamente o último step), e logar claramente em qual step o treino parou e por quê
+    - teste rápido: rodar um treino curto com --early-stopping --patience 2 e confirmar que ele para antes do STEPS total quando a métrica não melhora (pode-se forçar isso com hiperparâmetros ruins de propósito para o teste)
+    - registrar em DECISIONS.md: métrica escolhida como critério de parada e por quê, valores default de --patience e --eval-every
+    - Comportamento atual, deve ser mantido como possibilidade para futuros treinamentos.
+  Arquivos prováveis: training/trainer.py, deid_optimize.py (novas flags)
+  Depende de: nada
+
+- [x] **14. Otimização automática de hiperparâmetros**
+  Contexto: Atualmente, os hiperparâmetros (--lr, --lambda-id, --max-flow-px, --tau-ssim, --lambda-ssim, etc.) são ajustados manualmente entre experimentos, como visto nos scripts run_mask_comparison.sh e run_mask_band_comparison.sh, onde o conjunto base foi fixado "na mão" a partir do experimento de referência mid_combo_amp20_flow45_nopx. Quero automatizar essa busca para encontrar combinações melhores de hiperparâmetros antes de fixá-los como base para as próximas rodadas de comparação de máscaras.
+
+  Critério de pronto:
+    - script novo (ex.: scripts/run_hparam_search.py) que varre um espaço de busca definido (ex.: --lr, --lambda-id, --max-flow-px, --tau-ssim, --lambda-ssim) usando [a definir: grid search simples / Optuna / Ray Tune — sugestão: Optuna, por ser leve e não exigir infraestrutura extra]
+    - cada trial roda um treino curto (menos steps que um treino completo, ex.: --steps 1000) para viabilizar a busca em tempo razoável, usando a mesma métrica de validação da tarefa 13 (reaproveitar a lógica de eval, não duplicar)
+    - resultados de todos os trials salvos em CSV (ex.: hparam_search_results.csv), com colunas para cada hiperparâmetro testado + métrica final
+    - ao final, o script imprime a melhor combinação encontrada e como usá-la (ex.: linha de comando pronta para copiar em um treino completo)
+    - registrar em DECISIONS.md: espaço de busca usado, ferramenta escolhida, melhor combinação encontrada e se ela substitui o conjunto base atual (mid_combo_amp20_flow45) nos próximos experimentos
+  Arquivos prováveis: scripts/run_hparam_search.py (novo), training/trainer.py
+    (se precisar expor a métrica de validação de forma programática), requirements.txt
+    (nova dependência, ex.: optuna)
+  Depende de: tarefa 13 (reaproveita a métrica/lógica de validação)
+
+  ⚠️ Cada trial é um treino real (ainda que curto) — mesmo cuidado dos itens 5, 7 e 9: não deixe o agente disparar a busca completa automaticamente. Peça o script pronto, revise o espaço de busca e o número de trials, e execute manualmente.
+
+- [x] **15. Repetir treinos da tarefa 9 (SSIM corrigido) com early stopping (teto de 10000 steps)**
+  Contexto: na tarefa 9, os 4 experimentos com `--ssim-region full-landmarks` foram
+  treinados com `--steps 5000` fixos, sem early stopping (tarefa 13 ainda não existia).
+  Agora que early stopping está implementado, quero repetir esses mesmos 4 experimentos
+  com `--steps 10000` como teto e `--early-stopping` habilitado, para verificar se a
+  mesma qualidade (cos/euclid/ssim) é atingida com uma fração do custo de GPU.
+
+  Critério de pronto:
+    - script novo `scripts/run_ssim_fix_earlystop.sh` (baseado em
+      `run_ssim_fix_retrain.sh`), retreinando os mesmos 4 casos da tarefa 9:
+        - `mid_combo_amp20_flow45__mask-eyes+mouth+nose__ssim-fixed`
+        - `mid_combo_amp20_flow45__maskband-eyes__ssim-fixed`
+        - `mid_combo_amp20_flow45__maskband-eyes+mouth__ssim-fixed`
+        - `mid_combo_amp20_flow45__maskband-eyes+nose+mouth__ssim-fixed`
+      mesmos hiperparâmetros base + `--ssim-region full-landmarks`, mas agora com
+      `--steps 10000 --early-stopping --eval-every 100 --patience 3 --val-max-samples 200
+      --early-stopping-metric score` (mesmos valores usados no treino de referência
+      da busca de hiperparâmetros)
+    - nomes dos novos experimentos com sufixo `__earlystop1000`, para não sobrescrever
+      os checkpoints da tarefa 9 (ex.: `..._ssim-fixed__earlystop1000`)
+    - `scripts/compare_ssim_fix_earlystop.sh` (baseado em `compare_ssim_fix.sh`),
+      juntando os 4 novos + os 4 originais da tarefa 9 no mesmo `summary_all.csv`,
+      com colunas extras: steps efetivos rodados antes da parada e tempo total de treino
+    - registrar em DECISIONS.md: quantos steps cada run usou antes de parar, se
+      cos/euclid/ssim ficaram equivalentes aos da tarefa 9 apesar do teto de 1000 steps,
+      e se early stopping deve virar padrão nos próximos treinos de comparação de máscara
+  Arquivos prováveis: scripts/run_ssim_fix_earlystop.sh (novo),
+    scripts/compare_ssim_fix_earlystop.sh (novo), EXPERIMENTS.md, DECISIONS.md
+  Depende de: tarefa 9 (experimentos de referência), tarefa 13 (early stopping)
+
+  ⚠️ São 4 treinos completos (ainda que possam parar antes do teto). Não deixe o
+  agente disparar os runs automaticamente — peça os scripts prontos, revise os
+  comandos, e execute/confirme cada run manualmente.
+
+- [X] **16. Treinar modelos com os hiperparâmetros ótimos da busca (tarefa 14) e comparar com a base atual**
+  Contexto: a busca de hiperparâmetros (tarefa 14) retornou os seguintes top trials
+  (ordenados por score):
+    - trial 26 (score=0.4345): lr=0.0144483, lambda_id=22.78, max_flow_px=5.18, tau_ssim=0.922, lambda_ssim=21.2
+    - trial 25 (score=0.4322): lr=0.0104433, lambda_id=22.41, max_flow_px=5.23, tau_ssim=0.922, lambda_ssim=21.3
+    - trial 28 (score=0.4288): lr=0.0146674, lambda_id=24.96, max_flow_px=4.58, tau_ssim=0.920, lambda_ssim=29.5
+  Os demais flags (wavelet, target-cos, max-dct-amp, max-photo-amp, lambda-pixel etc.)
+  não fizeram parte do espaço de busca e devem seguir o comando de treino completo
+  sugerido pela tarefa 14. Quero treinar os top 3 trials por completo e compará-los
+  entre si e contra a base fixa atual (`mid_combo_amp20_flow45`: lr=0.008,
+  lambda_id=15, max_flow_px=4.5, tau_ssim=0.88, lambda_ssim=20.0) para decidir se os
+  hiperparâmetros otimizados devem substituir a base usada em experimentos futuros
+  de máscara (sucessores das tarefas 5/7/9).
+
+  Critério de pronto:
+    - script novo `scripts/run_best_hparams.sh`, treinando os 3 trials acima com os
+      flags fixos do comando sugerido pela tarefa 14 (`--transform-type dtcwt
+      --wavelet-J 3 --max-wavelet-amp 0.20 --lambda-wavelet-mag 0.01
+      --lambda-wavelet-phase 0.01 --lambda-wavelet-smooth 0.001 --target-cos 0.12
+      --max-dct-amp 0.12 --max-photo-amp 0.15 --lambda-pixel 6.0 --early-stopping
+      --eval-every 100 --patience 3 --val-max-samples 200
+      --early-stopping-metric score`), variando apenas lr/lambda-id/max-flow-px/
+      tau-ssim/lambda-ssim conforme cada trial
+    - nomes dos experimentos: `hparam_search__trial26`, `hparam_search__trial25`,
+      `hparam_search__trial28`
+    - `scripts/compare_best_hparams.sh`: roda `evaluate-single` nos 3 novos +
+      no baseline atual `mid_combo_amp20_flow45_nopx` (reaproveitado, não retreinar),
+      gerando `summary_all.csv` com as 4 linhas
+    - registrar em DECISIONS.md: qual trial teve melhor trade-off cos x ssim, se
+      algum supera a base fixa atual, e — em caso positivo — a partir de qual tarefa
+      do backlog a nova base passa a valer (deixando claro que tarefas 5/7/9 já
+      concluídas usaram a base antiga e não são retroativamente invalidadas)
+  Arquivos prováveis: scripts/run_best_hparams.sh (novo),
+    scripts/compare_best_hparams.sh (novo), EXPERIMENTS.md, DECISIONS.md
+  Depende de: tarefa 14 (busca de hiperparâmetros)
+
+  ⚠️ São 3 treinos completos reais (early stopping pode parar antes, mas ainda
+  representa custo de GPU). Não deixe o agente disparar os runs automaticamente —
+  peça os scripts prontos, revise os comandos, e execute/confirme cada run manualmente.
+
+

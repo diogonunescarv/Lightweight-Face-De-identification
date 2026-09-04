@@ -19,10 +19,16 @@ from models.masks import (
 )
 from data.dataset import FaceImageFolder, save_preview
 from losses.losses import identity_loss_ensemble, ssim_index_masked, pixel_l2_loss, total_variation_loss
+from evaluation.validate import (
+    compute_validation_metrics,
+    early_stopping_score,
+    is_improvement,
+)
 from utils.scheduler import WarmupScheduler
 from utils.helpers import set_seed
 
-def train(args):
+
+def train(args, *, val_callback=None):
     set_seed(args.seed)
 
     device = torch.device(args.device)
@@ -36,9 +42,14 @@ def train(args):
     with open(log_path, "w") as f:
         f.write("step,loss,id,cos,ssim,pix,tv,elapsed,lr,euclid\n")
 
+    val_log_path = None
+    if args.early_stopping:
+        val_log_path = out_dir / "val.csv"
+        with open(val_log_path, "w") as f:
+            f.write("step,cos_mean,euclid_mean,ssim_mean,score,is_best\n")
+
     dataset = FaceImageFolder(args.data, args.image_size)
 
-    # Gerador fixo para shuffle
     g = torch.Generator()
     g.manual_seed(args.seed)
 
@@ -56,6 +67,22 @@ def train(args):
         generator=g,
         worker_init_fn=worker_init_fn,
     )
+
+    val_loader = None
+    if args.early_stopping:
+        val_dataset = FaceImageFolder(args.val_data, args.image_size)
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            drop_last=False,
+        )
+        print(
+            f"Early stopping: val={args.val_data} eval_every={args.eval_every} "
+            f"patience={args.patience} metric={args.early_stopping_metric} "
+            f"val_max_samples={args.val_max_samples}"
+        )
 
     embedders = load_authorized_embedders(device)
 
@@ -141,6 +168,13 @@ def train(args):
 
     step = 0
     start = time.time()
+    early_stopped = False
+    best_score = float("inf") if args.early_stopping_metric == "cos" else float("-inf")
+    best_step = 0
+    best_metrics = None
+    patience_counter = 0
+    num_evals = 0
+    best_ckpt_path = out_dir / "transform_best.pt"
 
     while step < args.steps:
         for x, _paths in loader:
@@ -189,7 +223,6 @@ def train(args):
             ssim_vals = ssim_index_masked(x, y, ssim_mask)
             loss_ssim = F.relu(args.tau_ssim - ssim_vals).mean()
 
-            #loss_pix = pixel_l2_loss(x, y)
             loss_tv = total_variation_loss(y)
 
             regs = transformer.regularization()
@@ -197,7 +230,6 @@ def train(args):
             loss = (
                 args.lambda_id * loss_id
                 + args.lambda_ssim * loss_ssim
-                # + args.lambda_pixel * loss_pix
                 + args.lambda_tv * loss_tv
                 + args.lambda_flow_smooth * regs["flow_smooth"]
                 + args.lambda_dct_l2 * regs.get("dct_l2", 0.0)
@@ -225,14 +257,13 @@ def train(args):
 
                 with open(log_path, "a") as f:
                     f.write(
-                        f"{step}," 
-                        f"{loss.item():.5f}," 
-                        f"{loss_id.item():.5f}," 
-                        f"{mean_cos.item():.4f}," 
-                        f"{ssim_vals.mean().item():.4f}," 
-                        # f"{loss_pix.item():.6f}," 
-                        f"{loss_tv.item():.6f}," 
-                        f"{elapsed:.1f}," 
+                        f"{step},"
+                        f"{loss.item():.5f},"
+                        f"{loss_id.item():.5f},"
+                        f"{mean_cos.item():.4f},"
+                        f"{ssim_vals.mean().item():.4f},"
+                        f"{loss_tv.item():.6f},"
+                        f"{elapsed:.1f},"
                         f"{current_lr:.6f},"
                         f"{euclid:.4f}\n"
                     )
@@ -244,7 +275,6 @@ def train(args):
                     f"cos={mean_cos.item():.4f} "
                     f"euclid={euclid:.4f} "
                     f"ssim={ssim_vals.mean().item():.4f} "
-                    # f"pix={loss_pix.item():.6f} "
                     f"tv={loss_tv.item():.6f} "
                     f"elapsed={elapsed:.1f}s "
                     f"lr={current_lr:.6f}\n"
@@ -253,17 +283,134 @@ def train(args):
             if step % args.preview_every == 0:
                 save_preview(x, y, preview_dir / f"step_{step:06d}.jpg")
 
-            if step % args.save_every == 0 and step > 0:
+            if args.early_stopping and step > 0 and step % args.eval_every == 0:
+                metrics = compute_validation_metrics(
+                    transformer,
+                    embedders,
+                    val_loader,
+                    device,
+                    mask_mode=args.mask_mode,
+                    mask_regions=mask_regions,
+                    mask_shape=mask_shape,
+                    ssim_region=ssim_region,
+                    use_face_mask=not args.no_face_mask,
+                    landmark_detector=landmark_detector,
+                    max_samples=args.val_max_samples,
+                )
+                score = early_stopping_score(metrics, args.early_stopping_metric)
+                num_evals += 1
+
+                improved = is_improvement(
+                    score,
+                    best_score,
+                    metric_name=args.early_stopping_metric,
+                    min_delta=args.early_stopping_min_delta,
+                )
+                if improved:
+                    best_score = score
+                    best_step = step
+                    best_metrics = dict(metrics)
+                    patience_counter = 0
+                    save_checkpoint(
+                        transformer,
+                        args,
+                        best_ckpt_path,
+                        step,
+                        extra={
+                            "early_stopping_score": score,
+                            "early_stopping_metric": args.early_stopping_metric,
+                        },
+                    )
+                else:
+                    patience_counter += 1
+
+                if val_log_path is not None:
+                    with open(val_log_path, "a") as f:
+                        f.write(
+                            f"{step},"
+                            f"{metrics['cos_mean']:.6f},"
+                            f"{metrics['euclid_mean']:.6f},"
+                            f"{metrics['ssim_mean']:.6f},"
+                            f"{score:.6f},"
+                            f"{1 if improved else 0}\n"
+                        )
+
+                print(
+                    f"[val step {step:06d}] "
+                    f"cos={metrics['cos_mean']:.4f} "
+                    f"euclid={metrics['euclid_mean']:.4f} "
+                    f"ssim={metrics['ssim_mean']:.4f} "
+                    f"score={score:.4f} "
+                    f"best={best_score:.4f}@{best_step} "
+                    f"patience={patience_counter}/{args.patience}\n"
+                )
+
+                if val_callback is not None:
+                    val_callback(step, score, metrics)
+
+                if patience_counter >= args.patience:
+                    early_stopped = True
+                    print(
+                        f"Early stopping at step {step} "
+                        f"(best step {best_step}, best {args.early_stopping_metric}={best_score:.4f}, "
+                        f"patience exhausted)."
+                    )
+                    break
+
+                transformer.train()
+
+            elif step % args.save_every == 0 and step > 0 and not args.early_stopping:
                 save_checkpoint(transformer, args, out_dir / "transform.pt", step)
 
             step += 1
 
-    save_checkpoint(transformer, args, out_dir / "transform.pt", step)
-    print(f"Modelo salvo em: {out_dir / 'transform.pt'}")
+        if early_stopped:
+            break
+
+    extra_meta = {}
+    if args.early_stopping and num_evals > 0 and best_ckpt_path.exists():
+        best_ckpt = torch.load(best_ckpt_path, map_location=device)
+        transformer.load_state_dict(best_ckpt["state_dict"])
+        extra_meta = {
+            "early_stopped": early_stopped,
+            "best_step": best_step,
+            "best_score": best_score,
+            "stopped_step": step,
+            "early_stopping_metric": args.early_stopping_metric,
+        }
+        save_checkpoint(transformer, args, out_dir / "transform.pt", best_step, extra=extra_meta)
+        print(
+            f"Modelo salvo em: {out_dir / 'transform.pt'} "
+            f"(best step {best_step}, early_stopped={early_stopped})"
+        )
+    else:
+        save_checkpoint(transformer, args, out_dir / "transform.pt", step, extra=extra_meta)
+        print(f"Modelo salvo em: {out_dir / 'transform.pt'}")
+
     print(f"Log salvo em: {log_path}")
+    if val_log_path is not None:
+        print(f"Log de validação salvo em: {val_log_path}")
+
+    result = {
+        "best_score": best_score if num_evals > 0 else None,
+        "best_step": best_step if num_evals > 0 else None,
+        "stopped_step": step,
+        "early_stopped": early_stopped,
+        "cos_mean": best_metrics["cos_mean"] if best_metrics else None,
+        "ssim_mean": best_metrics["ssim_mean"] if best_metrics else None,
+        "euclid_mean": best_metrics["euclid_mean"] if best_metrics else None,
+        "out_dir": str(out_dir),
+    }
+    return result
 
 
-def save_checkpoint(transformer: LightweightDeIdentifier, args, path: Path, step: int):
+def save_checkpoint(
+    transformer: LightweightDeIdentifier,
+    args,
+    path: Path,
+    step: int,
+    extra: dict | None = None,
+):
     ckpt = {
         "step": step,
         "image_size": args.image_size,
@@ -288,6 +435,8 @@ def save_checkpoint(transformer: LightweightDeIdentifier, args, path: Path, step
         "disable_flow": args.disable_flow,
         "disable_photo": args.disable_photo,
     }
+    if extra:
+        ckpt.update(extra)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(ckpt, path)

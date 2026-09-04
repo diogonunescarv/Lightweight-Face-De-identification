@@ -85,6 +85,12 @@ def validate_mask_args(args) -> None:
     if regions is not None and shape is not None:
         validate_mask_shape_regions(shape, regions)
 
+
+def validate_train_args(args) -> None:
+    validate_mask_args(args)
+    if getattr(args, "early_stopping", False) and not getattr(args, "val_data", None):
+        raise ValueError("--val-data é obrigatório quando --early-stopping está ativo.")
+
 def build_parser():
     parser = argparse.ArgumentParser(
         description="Otimização de transformação leve para desidentificação facial autorizada."
@@ -133,6 +139,47 @@ def build_parser():
     p_train.add_argument("--log-every", type=int, default=25)
     p_train.add_argument("--preview-every", type=int, default=100)
     p_train.add_argument("--save-every", type=int, default=500)
+
+    p_train.add_argument(
+        "--early-stopping",
+        action="store_true",
+        help="Ativa validação periódica e parada antecipada (requer --val-data).",
+    )
+    p_train.add_argument(
+        "--val-data",
+        default=None,
+        help="Pasta de validação para early stopping.",
+    )
+    p_train.add_argument(
+        "--eval-every",
+        type=int,
+        default=500,
+        help="Intervalo em steps entre avaliações de validação (early stopping).",
+    )
+    p_train.add_argument(
+        "--patience",
+        type=int,
+        default=5,
+        help="Avaliações consecutivas sem melhora antes de parar (early stopping).",
+    )
+    p_train.add_argument(
+        "--val-max-samples",
+        type=int,
+        default=200,
+        help="Limite de imagens na validação durante treino (0=todas).",
+    )
+    p_train.add_argument(
+        "--early-stopping-metric",
+        default="score",
+        choices=["score", "euclid", "ssim", "cos"],
+        help="Métrica monitorada: score=ssim-cos (max), cos (min), ssim/euclid (max).",
+    )
+    p_train.add_argument(
+        "--early-stopping-min-delta",
+        type=float,
+        default=0.0,
+        help="Melhora mínima absoluta para contar como progresso.",
+    )
 
     p_train.add_argument("--transform-type", default="dct", choices=["dct", "dtcwt"])
     p_train.add_argument("--wavelet-J", type=int, default=3)
@@ -219,7 +266,7 @@ def main():
     args = parser.parse_args()
 
     if args.mode == "train":
-        validate_mask_args(args)
+        validate_train_args(args)
         train(args)
     elif args.mode == "apply":
         validate_mask_args(args)

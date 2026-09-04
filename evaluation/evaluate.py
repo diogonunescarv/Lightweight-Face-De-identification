@@ -1,19 +1,14 @@
-import math
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from pathlib import Path
 
 from models.masks import (
-    detect_landmarks_batch,
     parse_mask_regions,
-    resolve_face_mask_for_model,
-    resolve_ssim_mask,
     resolve_ssim_region_for_eval,
 )
 from utils.checkpoint import load_transformer_from_checkpoint
 from data.dataset import FaceImageFolder
-from losses.losses import ssim_index_masked
+from evaluation.validate import compute_validation_metrics
 
 @torch.no_grad()
 def evaluate(args):
@@ -23,7 +18,6 @@ def evaluate(args):
     ssim_region = resolve_ssim_region_for_eval(args.ssim_region, ckpt)
 
     transformer = load_transformer_from_checkpoint(args.checkpoint, device)
-    transformer.eval()
 
     mask_mode = getattr(args, "mask_mode", None)
     mask_regions = getattr(args, "mask_regions", None)
@@ -55,61 +49,24 @@ def evaluate(args):
         num_workers=args.num_workers,
     )
 
-    all_cos = []
-    all_ssim = []
-    total_images = 0
+    metrics = compute_validation_metrics(
+        transformer,
+        embedders,
+        loader,
+        device,
+        mask_mode=effective_mode,
+        mask_regions=regions,
+        mask_shape=shape,
+        ssim_region=ssim_region,
+        use_face_mask=transformer.use_face_mask,
+        landmark_detector=landmark_detector,
+        max_samples=0,
+    )
 
-    for x, paths in loader:
-        x = x.to(device)
-
-        landmarks_batch = None
-        if need_landmarks:
-            landmarks_batch = detect_landmarks_batch(paths, landmark_detector)
-
-        face_mask = resolve_face_mask_for_model(
-            transformer,
-            paths,
-            device,
-            mask_mode=mask_mode,
-            mask_regions=mask_regions,
-            mask_shape=mask_shape,
-            detector=landmark_detector,
-            landmarks_batch=landmarks_batch,
-        )
-        y = transformer(x, face_mask=face_mask)
-
-        batch_cos = []
-        for model in embedders:
-            e0 = F.normalize(model(x), dim=1)
-            e1 = F.normalize(model(y), dim=1)
-            cos = (e0 * e1).sum(dim=1)
-            batch_cos.append(cos)
-        mean_cos = torch.stack(batch_cos).mean(dim=0)
-        all_cos.append(mean_cos)
-
-        ssim_mask = resolve_ssim_mask(
-            transformer,
-            paths,
-            device,
-            ssim_region=ssim_region,
-            face_mask=face_mask,
-            mask_mode=effective_mode,
-            mask_regions=regions,
-            mask_shape=shape,
-            landmarks_batch=landmarks_batch,
-            detector=landmark_detector,
-        )
-        ssim_vals = ssim_index_masked(x, y, ssim_mask)
-        all_ssim.append(ssim_vals)
-
-        total_images += x.shape[0]
-
-    cos_all = torch.cat(all_cos)
-    ssim_all = torch.cat(all_ssim)
-
-    mean_cos = cos_all.mean().item()
-    mean_ssim = ssim_all.mean().item()
-    mean_euclid = math.sqrt(2.0 * (1.0 - mean_cos))
+    mean_cos = metrics["cos_mean"]
+    mean_ssim = metrics["ssim_mean"]
+    mean_euclid = metrics["euclid_mean"]
+    total_images = int(metrics["n_images"])
 
     print("\n========== Evaluation Results ==========")
     print(f"Total images evaluated: {total_images}")

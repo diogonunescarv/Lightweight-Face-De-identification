@@ -64,3 +64,29 @@ Mesmos hiperparâmetros fixos das seções anteriores + `--ssim-region full-land
 | 2026-09-01 | ssim_fix_retrain/mid_combo_amp20_flow45__maskband-eyes+nose+mouth__ssim-fixed/transform.pt | band | eyes+nose+mouth | dtcwt | 0.12 | 15 | 0.88 | 5000 | 0.437 | 1.045 | 0.820 | **Substitui** `maskband-eyes+nose+mouth` (tarefa 7: cos=0.485, ssim=0.825 com SSIM restrito à máscara). |
 
 Checkpoints em `/mnt/study-data/dcarvalho/tests/mask_comparison/` (full-landmarks reaproveitado) e `/mnt/study-data/dcarvalho/tests/ssim_fix_retrain/` (4 runs novos). Avaliação consolidada: `/mnt/study-data/dcarvalho/metrics/ssim_fix/summary_all.csv`.
+
+## Re-treino SSIM-fixed + early stopping (2026-09-03, item 15)
+
+Mesmos 4 casos da seção anterior + early stopping (`--steps 10000` teto, `--eval-every 100`, `--patience 3`, `--val-max-samples 200`, `--early-stopping-metric score`). Scripts: `run_ssim_scope_earlystop.sh`, `compare_ssim_scope_earlystop.sh`. Métricas: LFW test (`evaluate-single`, 200 imgs, `--ssim-region full-landmarks`). Coluna `steps` = `stopped_step` (treino parou); `best_step` entre parênteses.
+
+| Data | Checkpoint | forma | região | transform-type | target-cos | lambda-id | tau-ssim | steps | cos (val) | euclid (val) | ssim (val) | Observação |
+|------|-----------|-------|--------|-----------------|------------|-----------|----------|-------|-----------|--------------|------------|------------|
+| 2026-09-03 | ssim_scope_earlystop/mid_combo_amp20_flow45__mask-eyes+mouth+nose__ssim-fixed__earlystop10000/transform.pt | ellipse | eyes+nose+mouth | dtcwt | 0.12 | 15 | 0.88 | 4300 (best 4000) | 0.667 | 0.800 | 0.883 | Equivalente à tarefa 9 (cos=0.665, ssim=0.883). early_stopped=True. ~1148 s. |
+| 2026-09-03 | ssim_scope_earlystop/mid_combo_amp20_flow45__maskband-eyes__ssim-fixed__earlystop10000/transform.pt | band | eyes | dtcwt | 0.12 | 15 | 0.88 | 3600 (best 3300) | 0.655 | 0.813 | 0.872 | Equivalente à tarefa 9 (cos=0.652, ssim=0.872). early_stopped=True. ~950 s. |
+| 2026-09-03 | ssim_scope_earlystop/mid_combo_amp20_flow45__maskband-eyes+mouth__ssim-fixed__earlystop10000/transform.pt | band | eyes+mouth | dtcwt | 0.12 | 15 | 0.88 | 4300 (best 4000) | 0.435 | 1.045 | 0.825 | Equivalente à tarefa 9 (cos=0.434, ssim=0.825). early_stopped=True. ~1145 s. |
+| 2026-09-03 | ssim_scope_earlystop/mid_combo_amp20_flow45__maskband-eyes+nose+mouth__ssim-fixed__earlystop10000/transform.pt | band | eyes+nose+mouth | dtcwt | 0.12 | 15 | 0.88 | 4200 (best 3900) | 0.446 | 1.037 | 0.822 | ≈ tarefa 9 (cos=0.437, ssim=0.820); cos +0.009. early_stopped=True. ~1223 s. |
+
+Checkpoints em `/mnt/study-data/dcarvalho/tests/ssim_scope_earlystop/`. Avaliação: `/mnt/study-data/dcarvalho/metrics/ssim_scope_earlystop/summary_all.csv`.
+
+## Top-3 hiperparâmetros vs baseline (2026-09-04, item 16)
+
+Treino completo dos top 3 trials da busca Optuna (tarefa 14), com flags fixos do comando sugerido + early stopping (`--steps 5000` teto, `--eval-every 100`, `--patience 3`, `--val-max-samples 200`, `--early-stopping-metric score`). Máscara default `fixed` (elipse completa), `--ssim-region full-landmarks`. Baseline `mid_combo_amp20_flow45_nopx` reaproveitado (não retreinado); métricas abaixo reavaliadas com `--ssim-region full-landmarks`. Scripts: `run_best_hparams.sh`, `compare_best_hparams.sh`. Score = ssim-cos.
+
+| Data | Checkpoint | lr | lambda-id | max-flow-px | tau-ssim | lambda-ssim | steps | cos (val) | euclid (val) | ssim (val) | Observação |
+|------|-----------|-----|-----------|-------------|----------|-------------|-------|-----------|--------------|------------|------------|
+| 2026-09-04 | nopxloss/mid_combo_amp20_flow45_nopx/transform.pt | 0.008 | 15 | 4.5 | 0.88 | 20.0 | 5000 | 0.456 | 1.026 | 0.862 | **Baseline reaproveitado** (reavaliado full-landmarks). Score=0.406. |
+| 2026-09-04 | best_hparams/hparam_search__trial26/transform.pt | 0.0144483 | 22.78 | 5.18 | 0.922 | 21.2 | 1800 (best 1500) | 0.360 | 1.119 | 0.802 | Busca curta score=0.4345; full score=0.442. early_stopped. ~613 s. |
+| 2026-09-04 | best_hparams/hparam_search__trial25/transform.pt | 0.0104433 | 22.41 | 5.23 | 0.922 | 21.3 | 2000 (best 1700) | 0.356 | 1.122 | 0.800 | Busca curta score=0.4322; full score=0.444 (**melhor score**). early_stopped. ~547 s. |
+| 2026-09-04 | best_hparams/hparam_search__trial28/transform.pt | 0.0146674 | 24.96 | 4.58 | 0.920 | 29.5 | 1900 (best 1600) | 0.379 | 1.100 | 0.816 | Busca curta score=0.4288; full score=0.437. early_stopped. ~551 s. |
+
+Checkpoints novos em `/mnt/study-data/dcarvalho/tests/best_hparams/`. Avaliação consolidada: `/mnt/study-data/dcarvalho/metrics/best_hparams/summary_all.csv`.
