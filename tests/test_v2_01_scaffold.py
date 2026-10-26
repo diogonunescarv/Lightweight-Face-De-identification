@@ -31,12 +31,9 @@ class TestV2Step1Scaffold(unittest.TestCase):
         self.assertTrue(callable(train_v2))
         self.assertTrue(callable(validate_v2))
 
-    def test_v2_stubs_raise_not_implemented(self):
-        from models.dtcwt_meta_mask import DTCWTMetaMaskModule
+    def test_v2_remaining_stubs_raise_not_implemented(self):
         from training.trainer_v2 import train_v2
 
-        with self.assertRaises(NotImplementedError):
-            DTCWTMetaMaskModule()
         with self.assertRaises(NotImplementedError):
             train_v2()
 

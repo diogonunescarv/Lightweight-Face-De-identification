@@ -438,25 +438,36 @@ def detect_landmarks_batch(
     return results
 
 
-def resolve_face_mask(
-    transformer: LightweightDeIdentifier,
+def fixed_ellipse_face_mask(
+    image_size: int, device: torch.device
+) -> torch.Tensor:
+    """Centered soft ellipse fallback (shared V1/V2; no transformer required)."""
+    from models.transformer import build_elliptic_face_mask
+
+    return build_elliptic_face_mask(image_size, image_size, device)
+
+
+def resolve_face_mask_by_size(
     batch_size: int,
     paths: Sequence[str],
     device: torch.device,
     *,
+    image_size: int,
     use_face_mask: bool,
     mask_mode: str,
     mask_regions: tuple[str, ...],
     mask_shape: str = "ellipse",
     detector: FaceDetector | None = None,
     landmarks_batch: Sequence[np.ndarray | None] | None = None,
+    fallback_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    h = w = transformer.image_size
+    """ROI mask from flags + ``image_size`` (V2-friendly; no ``LightweightDeIdentifier``)."""
+    h = w = int(image_size)
 
     if not use_face_mask:
         return torch.ones(batch_size, 1, h, w, device=device)
 
-    fallback = transformer.get_fixed_face_mask(device)
+    fallback = fallback_mask if fallback_mask is not None else fixed_ellipse_face_mask(h, device)
 
     if mask_mode == "fixed":
         return fallback.expand(batch_size, -1, -1, -1)
@@ -485,29 +496,58 @@ def resolve_face_mask(
     )
 
 
-def resolve_ssim_mask(
+def resolve_face_mask(
     transformer: LightweightDeIdentifier,
+    batch_size: int,
     paths: Sequence[str],
     device: torch.device,
     *,
-    ssim_region: str,
-    face_mask: torch.Tensor,
+    use_face_mask: bool,
     mask_mode: str,
     mask_regions: tuple[str, ...],
-    mask_shape: str,
+    mask_shape: str = "ellipse",
+    detector: FaceDetector | None = None,
+    landmarks_batch: Sequence[np.ndarray | None] | None = None,
+) -> torch.Tensor:
+    """V1 wrapper: delegates to :func:`resolve_face_mask_by_size`."""
+    return resolve_face_mask_by_size(
+        batch_size,
+        paths,
+        device,
+        image_size=transformer.image_size,
+        use_face_mask=use_face_mask,
+        mask_mode=mask_mode,
+        mask_regions=mask_regions,
+        mask_shape=mask_shape,
+        detector=detector,
+        landmarks_batch=landmarks_batch,
+        fallback_mask=transformer.get_fixed_face_mask(device),
+    )
+
+
+def resolve_ssim_mask_by_size(
+    paths: Sequence[str],
+    device: torch.device,
+    *,
+    image_size: int,
+    ssim_region: str,
+    face_mask: torch.Tensor,
+    use_face_mask: bool,
     landmarks_batch: Sequence[np.ndarray | None] | None = None,
     detector: FaceDetector | None = None,
+    fallback_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
+    """SSIM scope mask from ``image_size`` + flags (shared V1/V2)."""
     region = parse_ssim_region(ssim_region)
 
-    if not transformer.use_face_mask:
+    if not use_face_mask:
         return torch.ones_like(face_mask)
 
     if region == "mask":
         return face_mask
 
-    h = w = transformer.image_size
-    fallback = transformer.get_fixed_face_mask(device)
+    h = w = int(image_size)
+    fallback = fallback_mask if fallback_mask is not None else fixed_ellipse_face_mask(h, device)
 
     if landmarks_batch is None:
         if detector is None:
@@ -524,6 +564,34 @@ def resolve_ssim_mask(
         device,
         fallback,
         mask_shape="ellipse",
+    )
+
+
+def resolve_ssim_mask(
+    transformer: LightweightDeIdentifier,
+    paths: Sequence[str],
+    device: torch.device,
+    *,
+    ssim_region: str,
+    face_mask: torch.Tensor,
+    mask_mode: str,
+    mask_regions: tuple[str, ...],
+    mask_shape: str,
+    landmarks_batch: Sequence[np.ndarray | None] | None = None,
+    detector: FaceDetector | None = None,
+) -> torch.Tensor:
+    """V1 wrapper around :func:`resolve_ssim_mask_by_size`."""
+    del mask_mode, mask_regions, mask_shape  # kept for call-site compatibility
+    return resolve_ssim_mask_by_size(
+        paths,
+        device,
+        image_size=transformer.image_size,
+        ssim_region=ssim_region,
+        face_mask=face_mask,
+        use_face_mask=transformer.use_face_mask,
+        landmarks_batch=landmarks_batch,
+        detector=detector,
+        fallback_mask=transformer.get_fixed_face_mask(device),
     )
 
 

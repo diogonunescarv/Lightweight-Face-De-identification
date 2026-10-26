@@ -11,6 +11,16 @@ Formato sugerido por entrada:
 
 ---
 
+## 2026-10-26 — V2 Step 2: DTCWTMetaMaskModule + Ideia 1 (`roi_compose=pixel`)
+Contexto: portar motor Phase 3.3 do irmão e encaixar ROI no pixel antes da loss.
+Decisão:
+- `models/dtcwt_meta_mask.py`: fórmula `W ← W + ΔW e^{iφ}`; biort/qshift `near_sym_b`/`qshift_b` (paridade irmão); default `editable_levels=(2,3)`; nível 1 permitido com **warning** (não ValueError).
+- **Ideia 1 fixada:** `residual = clamp((recon−x)⊙M, ±ε)` → `x_prot` (não blend `recon⊙M + x⊙(1−M)`). `ε=16/255`.
+- `roi_compose="wavelet"` → `NotImplementedError` (“Step 7”).
+- `M`/`M_ℓ` com `.detach()`; filtros DT-CWT `requires_grad=False`.
+- Desacoplamento ROI: `resolve_face_mask_by_size` / `resolve_ssim_mask_by_size` + `fixed_ellipse_face_mask`; wrappers V1 intactos.
+Resultado: testes `test_v2_02_*` + `test_v2_02b_*` verdes (ΔW=0≈id; grads; residual fora de M≈0; ellipse/band). Gate: autorização → Step 3.
+
 ## 2026-10-26 — V2 Step 1: scaffold enxuto + inventário + limpeza GitHub
 Contexto: Step 1 pedia inventário V1, stubs §5 e CLI `train-v2`; usuário pediu branch/GitHub **mínimos** (sem notebooks e sem artefatos de experimento V1).
 Decisão:
