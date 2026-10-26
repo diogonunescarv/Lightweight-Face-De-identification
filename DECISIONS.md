@@ -11,6 +11,14 @@ Formato sugerido por entrada:
 
 ---
 
+## 2026-10-26 — V2 Step 5: dataset merged LFW+CelebA + logs de tamanho
+Contexto: split Phase 3.3 reprodutível + campos obrigatórios de `image_size` / H×W.
+Decisão:
+- `data/merged_split.py`: `build_merged_frac_split` / `build_flat_data_dict` (paridade irmão); roots default `/mnt/databases/faces/...` com override `V2_LFW_ROOT` / `V2_CELEBA_ROOT` ou kwargs.
+- `PathListFaceDataset` + `make_face_dataloader`; `observe_batch_hw` / `sample_native_hw` / `build_split_config_block` para `config.json`.
+- Falha com `FileNotFoundError` claro se pastas ausentes.
+Resultado: testes unitários em tmp + smoke real (n_lfw_train=8226, n_celeba=24722). Gate: autorização → Step 6.
+
 ## 2026-10-26 — V2 Step 4: ensembles FR (presets + FaceNet smoke + bridge Protego)
 Contexto: V1 só tem FaceNet; Phase 3.3 precisa de `small`/`full` + held-out. Vendorar `FR_DB` inteiro incharia o GitHub.
 Decisão:
