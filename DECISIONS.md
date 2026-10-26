@@ -11,6 +11,16 @@ Formato sugerido por entrada:
 
 ---
 
+## 2026-10-26 — Início V2 — DT-CWT meta-máscara + ROI (`feature/v2-dtcwt-meta-mask`)
+Contexto: a V1 (DCT/wavelet global + flow/photo) saturava o trade-off cos×SSIM e máscaras parciais falhavam em desidentificar. O projeto irmão `dtcwt_mask_optimization` (Phase 3.3) validou meta-máscara espacial DT-CWT + SignSGD + loss cos+SSIM hinge.
+Decisão:
+- Branch `feature/v2-dtcwt-meta-mask`; fonte da verdade: `V2.md`.
+- Substituir warp/photo/DCT no path V2 por **DT-CWT meta-máscara** (Δmag/Δphase espaciais); **manter** máscaras ROI (`models/masks.py`, mesmas flags).
+- Ordem fixa de composição ROI via `--roi-compose`: **Ideia 1 `pixel` primeiro** (ΔW full → IDT-CWT → residual⊙M → L∞); **Ideia 2 `wavelet` depois** (ΔW⊙M_ℓ; sem regressão no path `pixel`).
+- Sem warm-start online nesta V2 (→ V2.1). Notebooks fora do escopo até Step 9 (só viz).
+- Código V1 permanece atrás de CLI legada; checkpoints V1 não carregam no módulo V2.
+Resultado: Step 0 concluído (branch + higiene). Próximo: Step 1 (scaffold + inventário).
+
 ## 2026-09-21 — Filtro frontal pose≤25° + oclusões (TODO item 6)
 Contexto: treinos/avaliações precisam de faces quase frontais sem oclusões grosseiras (óculos escuros, máscaras). Alinhamento por landmarks (itens 1–2) é ortogonal; aqui só **seleção**. LFW tem dois splits (`faces_train` / `faces_test`) a preservar.
 Decisão:

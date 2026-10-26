@@ -4,6 +4,7 @@ Este projeto implementa uma transformação facial leve para desidentificação 
 
 ## Sumário
 
+- [Roadmap V2](#roadmap-v2)
 - [Requisitos](#requisitos)
 - [Instalação](#instalação)
 - [Estrutura do código](#estrutura-do-código)
@@ -24,6 +25,10 @@ Este projeto implementa uma transformação facial leve para desidentificação 
 - [Dicas para ajuste fino](#dicas-para-ajuste-fino)
 
 ---
+
+## Roadmap V2
+
+A evolução **V2** (DT-CWT meta-máscara espacial + ROI, sem warp/photo/DCT no path novo) está especificada em [`V2.md`](V2.md). Trabalho na branch `feature/v2-dtcwt-meta-mask`. Até a V2 estabilizar, o treino documentado abaixo permanece o caminho **V1 (legado)**.
 
 ## Requisitos
 

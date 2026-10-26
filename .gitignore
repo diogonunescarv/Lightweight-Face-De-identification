@@ -3,3 +3,25 @@ __pycache__/
 scripts/
 .cline/
 notebooks/outputs/
+
+# V2 runs / artifacts (never commit weights, logs, previews, or local datasets)
+*.pt
+*.pth
+*.onnx
+*.ckpt
+/mnt/
+tests/smoke_*/
+**/previews/
+**/logs/
+train_log.csv
+val_log.csv
+heldout_log.csv
+summary.json
+eval_metrics.csv
+*.log
+
+# Local datasets / caches
+data/raw/
+data/cache/
+.cache/
+*.npz
