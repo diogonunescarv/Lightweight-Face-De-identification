@@ -11,6 +11,15 @@ Formato sugerido por entrada:
 
 ---
 
+## 2026-10-26 — V2 Step 3: loss Phase 3.3 (identity cos + SSIM hinge / w)
+Contexto: loss campeã do irmão sem hinge `target_cos` da V1; SSIM com escopo `--ssim-region`.
+Decisão:
+- `losses/identity.py`: `identity_cosine_loss` = mean cos L2-norm (minimizar); `mean_identity_cosine` para ensemble.
+- `losses/quality.py`: `apply_linf_budget`, `ssim_hinge_loss`, `adapt_percep_weight` (regras Protego 0.99/1.01; w∈[1/129,129]).
+- **SSIM canônico:** reusa `ssim_index` / `ssim_index_masked` da V1 — **não** adiciona `pytorch_msssim` (leve). `compute_ssim` escolhe full vs masked.
+- ROI L∞ continua no módulo (residual⊙M); `apply_linf_budget` é o clamp full-frame.
+Resultado: `tests/test_v2_03_loss_quality.py` verde. Gate: autorização → Step 4 (FR ensemble).
+
 ## 2026-10-26 — V2 Step 2: DTCWTMetaMaskModule + Ideia 1 (`roi_compose=pixel`)
 Contexto: portar motor Phase 3.3 do irmão e encaixar ROI no pixel antes da loss.
 Decisão:

@@ -1,2 +1,15 @@
 # losses/__init__.py
-from .losses import identity_loss_ensemble, ssim_index, ssim_index_masked, pixel_l2_loss, total_variation_loss
+from .losses import (
+    identity_loss_ensemble,
+    ssim_index,
+    ssim_index_masked,
+    pixel_l2_loss,
+    total_variation_loss,
+)
+from .identity import identity_cosine_loss, mean_identity_cosine
+from .quality import (
+    adapt_percep_weight,
+    apply_linf_budget,
+    compute_ssim,
+    ssim_hinge_loss,
+)
