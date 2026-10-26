@@ -31,12 +31,6 @@ class TestV2Step1Scaffold(unittest.TestCase):
         self.assertTrue(callable(train_v2))
         self.assertTrue(callable(validate_v2))
 
-    def test_v2_remaining_stubs_raise_not_implemented(self):
-        from training.trainer_v2 import train_v2
-
-        with self.assertRaises(NotImplementedError):
-            train_v2()
-
     def test_mask_token_coverage_v1_parity(self):
         """ROI tokens from V2.md §3.1.1 must parse with existing masks.py."""
         from models.masks import (
@@ -73,7 +67,7 @@ class TestV2Step1Scaffold(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_mask_shape_regions("ellipse", ("eyes-nose",))
 
-    def test_cli_train_v2_recognized_and_exits_nonzero(self):
+    def test_cli_train_v2_recognized(self):
         proc = subprocess.run(
             [sys.executable, str(ROOT / "deid_optimize.py"), "train-v2", "--help"],
             cwd=ROOT,
@@ -82,10 +76,19 @@ class TestV2Step1Scaffold(unittest.TestCase):
             check=False,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertTrue("train-v2" in proc.stdout or "V2" in proc.stdout)
+        self.assertTrue("train-v2" in proc.stdout or "roi-compose" in proc.stdout)
 
         proc2 = subprocess.run(
-            [sys.executable, str(ROOT / "deid_optimize.py"), "train-v2"],
+            [
+                sys.executable,
+                str(ROOT / "deid_optimize.py"),
+                "train-v2",
+                "--roi-compose",
+                "wavelet",
+                "--smoke-fr",
+                "--out-root",
+                str(ROOT / "tests" / "smoke_cli_tmp"),
+            ],
             cwd=ROOT,
             capture_output=True,
             text=True,
@@ -93,7 +96,7 @@ class TestV2Step1Scaffold(unittest.TestCase):
         )
         self.assertNotEqual(proc2.returncode, 0)
         combined = (proc2.stderr + proc2.stdout).lower()
-        self.assertIn("not implemented", combined)
+        self.assertIn("step 7", combined)
 
 
 if __name__ == "__main__":

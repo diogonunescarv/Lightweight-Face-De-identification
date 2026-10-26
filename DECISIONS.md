@@ -11,6 +11,17 @@ Formato sugerido por entrada:
 
 ---
 
+## 2026-10-26 — V2 Step 6: trainer V2 (pixel) + SignSGD/Adam + resume
+Contexto: loop Phase 3.3 com ROI Ideia 1; cos/SSIM só sobre `x_prot`.
+Decisão:
+- `training/trainer_v2.py`: épocas + ES (`cos` min default); SignSGD `protego_sign_step`; Adam opcional; ckpt atômico `checkpoint_latest.pt` + resume na mesma pasta.
+- Forward meta-máscara **recomputado por FR** (paridade Phase 3.3; sem `retain_graph`).
+- SSIM hinge só no 1º FR; `adapt_percep_weight` após o step.
+- CLI `train-v2` com flags §6; `--roi-compose wavelet` → exit 2 / Step 7.
+- Smoke usa `--smoke-fr` (FaceNets); não é preset de produção.
+- Run autocontido sob `--out-root` (config/train_log/previews/ckpts/summary).
+Resultado: `test_v2_06` 6/6 OK. Gate: autorização → Step 7 (`wavelet`).
+
 ## 2026-10-26 — V2 Step 5: dataset merged LFW+CelebA + logs de tamanho
 Contexto: split Phase 3.3 reprodutível + campos obrigatórios de `image_size` / H×W.
 Decisão:

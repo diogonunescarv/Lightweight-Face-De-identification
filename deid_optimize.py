@@ -317,12 +317,62 @@ def build_parser():
     add_ssim_region_arg(p_eval_single)
 
     # -------------------------
-    # train-v2 (scaffold — Step 1; logic from Step 6+)
+    # train-v2 (DT-CWT meta-máscara + ROI; Ideia 1 pixel)
     # -------------------------
-    sub.add_parser(
+    p_v2 = sub.add_parser(
         "train-v2",
-        help="Treino V2 (DT-CWT meta-máscara + ROI). Ainda não implementado (ver V2.md).",
+        help="Treino V2: DT-CWT meta-máscara espacial + ROI (ver V2.md).",
     )
+    p_v2.add_argument("--out-root", default="./runs", help="Root de runs autocontidos.")
+    p_v2.add_argument("--out", default=None, help="Alias de --out-root (compat).")
+    p_v2.add_argument("--exp-name", default="meta_mask")
+    p_v2.add_argument("--device", default="cpu")
+    p_v2.add_argument("--image-size", type=int, default=224)
+    p_v2.add_argument("--batch-size", type=int, default=2)
+    p_v2.add_argument("--num-workers", type=int, default=0)
+    p_v2.add_argument("--epochs", type=int, default=5)
+    p_v2.add_argument("--max-steps", type=int, default=None, help="Cap de steps (smoke).")
+    p_v2.add_argument("--max-train", type=int, default=None)
+    p_v2.add_argument("--optimizer", choices=["adam", "protego"], default="protego")
+    p_v2.add_argument("--lr", type=float, default=None)
+    p_v2.add_argument("--epsilon", type=float, default=16.0 / 255.0)
+    p_v2.add_argument("--min-ssim", type=float, default=0.95)
+    p_v2.add_argument("--wavelet-J", type=int, default=3)
+    p_v2.add_argument("--editable-levels", default="2,3")
+    p_v2.add_argument("--init-std", type=float, default=1e-3)
+    p_v2.add_argument("--fr-preset", choices=["small", "full"], default="small")
+    p_v2.add_argument("--fr-models", default=None, help="CSV override do preset.")
+    p_v2.add_argument("--eval-fr-models", default=None)
+    p_v2.add_argument(
+        "--smoke-fr",
+        action="store_true",
+        help="Usa FaceNets built-in (não é preset de produção).",
+    )
+    p_v2.add_argument("--dataset", default="merged_lfw_celeba")
+    p_v2.add_argument("--celeba-train-frac", type=float, default=0.5)
+    p_v2.add_argument("--data-seed", type=int, default=42)
+    p_v2.add_argument("--seed", type=int, default=42)
+    p_v2.add_argument("--lfw-root", default=None)
+    p_v2.add_argument("--celeba-root", default=None)
+    p_v2.add_argument(
+        "--roi-compose",
+        choices=["pixel", "wavelet"],
+        default="pixel",
+        help="pixel=Ideia 1 (default); wavelet=Step 7.",
+    )
+    p_v2.add_argument("--no-face-mask", action="store_true")
+    add_mask_args(p_v2, for_train=True)
+    # V2 defaults for mask-mode differ from V1 train.
+    p_v2.set_defaults(mask_mode="landmarks")
+    add_ssim_region_arg(p_v2, for_train=True)
+    p_v2.add_argument("--early-stopping", action=argparse.BooleanOptionalAction, default=True)
+    p_v2.add_argument("--early-stopping-metric", default="cos", choices=["cos", "score", "ssim", "euclid"])
+    p_v2.add_argument("--patience", type=int, default=2)
+    p_v2.add_argument("--min-delta", type=float, default=0.005)
+    p_v2.add_argument("--val-max-samples", type=int, default=200)
+    p_v2.add_argument("--ckpt-every", type=int, default=1000)
+    p_v2.add_argument("--preview-every", type=int, default=100)
+    p_v2.add_argument("--resume", default=None, help="checkpoint_latest.pt na pasta do run.")
 
     return parser
 
@@ -335,12 +385,16 @@ def main():
         validate_train_args(args)
         train(args)
     elif args.mode == "train-v2":
-        print(
-            "train-v2: not implemented yet (V2 Step 1 scaffold). "
-            "See V2.md Steps 2–6.",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
+        validate_mask_args(args)
+        if getattr(args, "out", None):
+            args.out_root = args.out
+        from training.trainer_v2 import train_v2
+
+        try:
+            train_v2(args)
+        except NotImplementedError as exc:
+            print(str(exc), file=sys.stderr)
+            raise SystemExit(2) from exc
     elif args.mode == "apply":
         validate_mask_args(args)
         apply_transform(args)
