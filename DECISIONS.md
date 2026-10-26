@@ -11,6 +11,16 @@ Formato sugerido por entrada:
 
 ---
 
+## 2026-10-26 — V2 Step 4: ensembles FR (presets + FaceNet smoke + bridge Protego)
+Contexto: V1 só tem FaceNet; Phase 3.3 precisa de `small`/`full` + held-out. Vendorar `FR_DB` inteiro incharia o GitHub.
+Decisão:
+- `models/fr/`: presets Protego (`SMALL` 3 nomes, `FULL` = BASIC_POOL sem `ir50_adaface_casia`, eval default FaceNets held-out); `assert_train_eval_disjoint`.
+- **Built-in:** `inception_facenet_{vgg,casia}` via `facenet-pytorch` (smoke/grads; **não** é preset de produção).
+- **Produção `small`/`full`:** bridge opcional `PROTEGO_FR_ROOT` / `third_party/protego_fr/` (gitignore); sem path → erro claro pedindo FaceNet built-in ou FR_DB.
+- Offload: `ensemble_cosine_mean(..., offload=True)` move 1 FR por vez GPU↔CPU.
+- Pesos FR **nunca** commitados.
+Resultado: `test_v2_04` 9 ok + 1 skip (Protego ausente). Gate: autorização → Step 5.
+
 ## 2026-10-26 — V2 Step 3: loss Phase 3.3 (identity cos + SSIM hinge / w)
 Contexto: loss campeã do irmão sem hinge `target_cos` da V1; SSIM com escopo `--ssim-region`.
 Decisão:

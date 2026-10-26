@@ -31,3 +31,7 @@ eval_metrics.csv
 # Local datasets / caches
 data/raw/
 data/cache/
+
+# Optional Protego FR_DB (weights / vendored code — never commit)
+third_party/protego_fr/
+FR_DB/
