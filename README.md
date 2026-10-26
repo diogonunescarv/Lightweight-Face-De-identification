@@ -28,9 +28,36 @@ Este projeto implementa uma transformação facial leve para desidentificação 
 
 ## Roadmap V2
 
-A evolução **V2** (DT-CWT meta-máscara espacial + ROI, sem warp/photo/DCT no path novo) está especificada em [`V2.md`](V2.md). Trabalho na branch `feature/v2-dtcwt-meta-mask`.
+A evolução **V2** (DT-CWT meta-máscara espacial + ROI, sem warp/photo/DCT) está em [`V2.md`](V2.md) na branch `feature/v2-dtcwt-meta-mask`. Tracking GitHub enxuto (sem notebooks/EXPERIMENTS nesta branch).
 
-Nesta branch o tracking GitHub é **enxuto**: sem `notebooks/`, sem `EXPERIMENTS.md`/`TODO.md` (histórico V1 no `main`). CLI `train-v2` existe como stub até o Step 6. Até a V2 estabilizar, o treino documentado abaixo permanece o caminho **V1 (legado)**.
+### Treino V2 (meta-máscara)
+
+```bash
+# Ideia 1 (default): aprender ΔW full + encaixar pela ROI no pixel
+bash scripts/run_v2_train_small.sh          # protego + FR small + pixel
+bash scripts/run_v2_train_wavelet.sh        # Ideia 2: ΔW ⊙ M_ℓ
+bash scripts/run_v2_train_full.sh           # ensemble full (VRAM alto)
+
+# Avaliação (artefatos em <run>/eval/)
+python deid_optimize.py evaluate-v2 \
+  --checkpoint /path/to/run/meta_mask_best.pt \
+  --data /path/to/faces --max-samples 16 --no-lpips
+```
+
+| | V1 (`train`) | V2 (`train-v2`) |
+|--|--------------|-----------------|
+| Motor | DCT/DT-CWT global + flow + photo | DT-CWT meta-máscara espacial |
+| ROI | ellipse/band (mesmas flags) | mesmas flags + `--roi-compose` |
+| `--roi-compose` | — | `pixel` (Ideia 1) \| `wavelet` (Ideia 2) |
+| Loss ID | hinge `target_cos` | mean cos (Phase 3.3) |
+| Otimizador | Adam (+ schedulers) | `protego` (SignSGD) \| `adam` |
+| Checkpoints V1 | `.pt` transformador | **não** carregam no módulo V2 |
+
+**Ideia 1 vs 2:** `pixel` = ΔW full → IDT-CWT → residual⊙M → L∞; `wavelet` = ΔW⊙M_ℓ → IDT-CWT → L∞. Cos/SSIM sempre sobre a imagem final protegida.
+
+Preset `small`/`full` exige `PROTEGO_FR_ROOT` (FR_DB do projeto irmão). Smoke/local: `--smoke-fr` (FaceNets built-in).
+
+O restante deste README descreve o caminho **V1 (legado)**.
 
 ## Requisitos
 

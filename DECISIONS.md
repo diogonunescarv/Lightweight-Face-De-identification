@@ -11,6 +11,14 @@ Formato sugerido por entrada:
 
 ---
 
+## 2026-10-26 — V2 Step 8: CLI evaluate-v2 + scripts de treino
+Contexto: UX para experimentos pixel/wavelet e eval autocontido.
+Decisão:
+- `evaluate-v2`: cos/SSIM (+ LPIPS opcional se `lpips` instalado); saída em `<run>/eval/`; respeita `roi_compose` do ckpt (override CLI logado).
+- Scripts: `run_v2_train_small.sh` (protego+small+pixel), `run_v2_train_wavelet.sh`, `run_v2_train_full.sh` (VRAM alto).
+- README: tabela V1 vs V2 + Ideia 1 vs 2.
+Resultado: `test_v2_08` e2e 16 imgs OK. Gate: autorização → Step 9.
+
 ## 2026-10-26 — V2 Step 7: `--roi-compose wavelet` (Ideia 2) sem regressão pixel
 Contexto: restringir ΔW no domínio wavelet sob ROI; path `pixel` intacto.
 Decisão:

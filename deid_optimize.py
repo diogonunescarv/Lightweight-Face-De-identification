@@ -374,6 +374,40 @@ def build_parser():
     p_v2.add_argument("--preview-every", type=int, default=100)
     p_v2.add_argument("--resume", default=None, help="checkpoint_latest.pt na pasta do run.")
 
+    # -------------------------
+    # evaluate-v2
+    # -------------------------
+    p_ev2 = sub.add_parser(
+        "evaluate-v2",
+        help="Avalia checkpoint V2 (meta-máscara); saiídas em <run>/eval/.",
+    )
+    p_ev2.add_argument("--checkpoint", required=True, help="meta_mask.pt / best / latest")
+    p_ev2.add_argument("--data", required=True, help="Pasta de imagens (flat)")
+    p_ev2.add_argument(
+        "--run-dir",
+        default=None,
+        help="Pasta do run (default: diretório do checkpoint).",
+    )
+    p_ev2.add_argument("--device", default="cpu")
+    p_ev2.add_argument("--batch-size", type=int, default=4)
+    p_ev2.add_argument("--num-workers", type=int, default=0)
+    p_ev2.add_argument("--max-samples", type=int, default=0, help="0=todas")
+    p_ev2.add_argument(
+        "--fr-models",
+        default=None,
+        help="CSV de FRs (default: FaceNets built-in inception_facenet_vgg,casia).",
+    )
+    p_ev2.add_argument(
+        "--roi-compose",
+        choices=["pixel", "wavelet"],
+        default=None,
+        help="Override do checkpoint (logado se diferir).",
+    )
+    p_ev2.add_argument("--no-face-mask", action="store_true")
+    p_ev2.add_argument("--no-lpips", action="store_true")
+    add_mask_args(p_ev2, for_train=False)
+    add_ssim_region_arg(p_ev2, for_train=False)
+
     return parser
 
 
@@ -391,6 +425,28 @@ def main():
         from training.trainer_v2 import train_v2
 
         train_v2(args)
+    elif args.mode == "evaluate-v2":
+        validate_mask_args(args)
+        from evaluation.evaluate_v2 import evaluate_v2
+
+        evaluate_v2(
+            checkpoint_path=args.checkpoint,
+            data_dir=args.data,
+            run_dir=args.run_dir,
+            device=args.device,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            max_samples=args.max_samples,
+            fr_models=args.fr_models,
+            smoke_fr=args.fr_models is None,
+            roi_compose=args.roi_compose,
+            mask_mode=args.mask_mode,
+            mask_regions=args.mask_regions,
+            mask_shape=args.mask_shape,
+            ssim_region=args.ssim_region,
+            no_face_mask=args.no_face_mask if args.no_face_mask else None,
+            compute_lpips=not args.no_lpips,
+        )
     elif args.mode == "apply":
         validate_mask_args(args)
         apply_transform(args)
