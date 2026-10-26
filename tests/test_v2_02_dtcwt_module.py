@@ -78,11 +78,10 @@ class TestV2DtcwtMetaMask(unittest.TestCase):
         self.assertEqual(m.frozen_levels, (1,))
         self.assertNotIn("1", m.delta_mag)
 
-    def test_wavelet_compose_not_implemented(self):
-        m = DTCWTMetaMaskModule(img_size=self.img_size, J=3, init_std=0.0)
-        with self.assertRaises(NotImplementedError) as ctx:
-            m(self.x, roi_compose="wavelet")
-        self.assertIn("Step 7", str(ctx.exception))
+    def test_wavelet_compose_runs(self):
+        m = DTCWTMetaMaskModule(img_size=self.img_size, J=3, init_std=1e-2)
+        y = m(self.x, face_mask=None, roi_compose="wavelet")
+        self.assertEqual(tuple(y.shape), tuple(self.x.shape))
 
     def test_default_editable_levels(self):
         self.assertEqual(DEFAULT_EDITABLE_LEVELS, (2, 3))

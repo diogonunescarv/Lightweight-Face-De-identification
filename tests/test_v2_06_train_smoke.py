@@ -155,17 +155,6 @@ class TestTrainV2Smoke(unittest.TestCase):
         payload2 = torch.load(out2 / "checkpoint_latest.pt", map_location="cpu", weights_only=False)
         self.assertGreaterEqual(int(payload2["global_step"]), step1 + 1)
 
-    def test_wavelet_rejected(self):
-        args = _base_args(
-            self.out_root / "wav",
-            self.train_paths,
-            self.eval_paths,
-            roi_compose="wavelet",
-        )
-        with self.assertRaises(NotImplementedError) as ctx:
-            train_v2(args)
-        self.assertIn("Step 7", str(ctx.exception))
-
     def test_residual_outside_hard_mask_near_zero_after_steps(self):
         args = _base_args(
             self.out_root / "roi",

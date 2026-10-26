@@ -76,27 +76,8 @@ class TestV2Step1Scaffold(unittest.TestCase):
             check=False,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertTrue("train-v2" in proc.stdout or "roi-compose" in proc.stdout)
-
-        proc2 = subprocess.run(
-            [
-                sys.executable,
-                str(ROOT / "deid_optimize.py"),
-                "train-v2",
-                "--roi-compose",
-                "wavelet",
-                "--smoke-fr",
-                "--out-root",
-                str(ROOT / "tests" / "smoke_cli_tmp"),
-            ],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertNotEqual(proc2.returncode, 0)
-        combined = (proc2.stderr + proc2.stdout).lower()
-        self.assertIn("step 7", combined)
+        self.assertIn("roi-compose", proc.stdout)
+        self.assertIn("wavelet", proc.stdout)
 
 
 if __name__ == "__main__":

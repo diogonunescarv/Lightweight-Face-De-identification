@@ -11,6 +11,14 @@ Formato sugerido por entrada:
 
 ---
 
+## 2026-10-26 — V2 Step 7: `--roi-compose wavelet` (Ideia 2) sem regressão pixel
+Contexto: restringir ΔW no domínio wavelet sob ROI; path `pixel` intacto.
+Decisão:
+- `elif roi_compose == "wavelet"`: downsample bilinear \(M\to M_ℓ\) (detach); `yh += (ΔW⊙M_ℓ)e^{iφ}`; IDT-CWT → L∞ **full-frame** (sem residual⊙M extra no pixel — a ROI já limita ΔW).
+- Branch `pixel` não refatorado além do `if/elif`.
+- Com `M≡1` (`--no-face-mask`): outputs `pixel` ≈ `wavelet`.
+Resultado: `test_v2_07` + regressão Steps 2/6 verdes (25 testes). Gate: autorização → Step 8.
+
 ## 2026-10-26 — V2 Step 6: trainer V2 (pixel) + SignSGD/Adam + resume
 Contexto: loop Phase 3.3 com ROI Ideia 1; cos/SSIM só sobre `x_prot`.
 Decisão:

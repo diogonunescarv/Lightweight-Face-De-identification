@@ -358,7 +358,7 @@ def build_parser():
         "--roi-compose",
         choices=["pixel", "wavelet"],
         default="pixel",
-        help="pixel=Ideia 1 (default); wavelet=Step 7.",
+        help="pixel=Ideia 1 (encaixe ROI no pixel); wavelet=Ideia 2 (ΔW⊙M_ℓ).",
     )
     p_v2.add_argument("--no-face-mask", action="store_true")
     add_mask_args(p_v2, for_train=True)
@@ -390,11 +390,7 @@ def main():
             args.out_root = args.out
         from training.trainer_v2 import train_v2
 
-        try:
-            train_v2(args)
-        except NotImplementedError as exc:
-            print(str(exc), file=sys.stderr)
-            raise SystemExit(2) from exc
+        train_v2(args)
     elif args.mode == "apply":
         validate_mask_args(args)
         apply_transform(args)

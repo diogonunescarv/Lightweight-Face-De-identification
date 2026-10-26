@@ -119,12 +119,10 @@ def train_v2(args) -> Path:
     set_seed(int(getattr(args, "seed", 42)))
 
     roi_compose = getattr(args, "roi_compose", "pixel")
-    if roi_compose == "wavelet":
-        raise NotImplementedError(
-            "roi_compose='wavelet' disponível no Step 7. Use --roi-compose pixel."
+    if roi_compose not in ("pixel", "wavelet"):
+        raise ValueError(
+            f"roi_compose inválido: {roi_compose!r}. Use 'pixel' ou 'wavelet'."
         )
-    if roi_compose != "pixel":
-        raise ValueError(f"roi_compose inválido: {roi_compose!r}")
 
     device = torch.device(getattr(args, "device", "cpu"))
     image_size = int(getattr(args, "image_size", 224))

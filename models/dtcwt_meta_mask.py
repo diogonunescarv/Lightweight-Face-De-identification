@@ -209,6 +209,7 @@ class DTCWTMetaMaskModule(nn.Module):
         yh: List[torch.Tensor],
         phi: Optional[torch.Tensor] = None,
     ) -> List[torch.Tensor]:
+        """Ideia 1: apply full-frame ΔW on editable levels."""
         yh_out: List[torch.Tensor] = []
         for j, band in enumerate(yh):
             level = j + 1
@@ -224,6 +225,41 @@ class DTCWTMetaMaskModule(nn.Module):
                     phi=phi,
                 )
             )
+        return yh_out
+
+    def _downsample_roi_to_level(
+        self, face_mask: torch.Tensor, height: int, width: int
+    ) -> torch.Tensor:
+        """Bilinear downsample of ROI mask to YH spatial size; always detached."""
+        m = F.interpolate(
+            face_mask,
+            size=(height, width),
+            mode="bilinear",
+            align_corners=False,
+        )
+        return m.detach()
+
+    def _apply_mask_to_yh_wavelet(
+        self,
+        yh: List[torch.Tensor],
+        face_mask: torch.Tensor,
+        phi: Optional[torch.Tensor] = None,
+    ) -> List[torch.Tensor]:
+        """Ideia 2: apply ``ΔW ⊙ M_ℓ`` on editable levels only."""
+        yh_out: List[torch.Tensor] = []
+        for j, band in enumerate(yh):
+            level = j + 1
+            if level not in self.editable_levels:
+                yh_out.append(band)
+                continue
+            key = str(level)
+            # band: (N, C, 6, H, W, 2)
+            h_l, w_l = int(band.shape[-3]), int(band.shape[-2])
+            m_l = self._downsample_roi_to_level(face_mask, h_l, w_l)  # (N,1,H,W)
+            m_b = m_l.unsqueeze(2)  # (N,1,1,H,W) → broadcast vs (1,C,6,H,W)
+            d_mag = self.delta_mag[key] * m_b
+            d_phase = self.delta_phase[key] * m_b
+            yh_out.append(add_complex_meta_mask(band, d_mag, d_phase, phi=phi))
         return yh_out
 
     def _resolve_face_mask(
@@ -254,33 +290,49 @@ class DTCWTMetaMaskModule(nn.Module):
 
         cos/SSIM (later steps) must always be computed on the returned ``x_prot``.
         """
+        if roi_compose == ROI_COMPOSE_PIXEL:
+            # --- Ideia 1 (baseline; do not refactor body casually) ---
+            x_in = self._prepare_input(x)
+            yl, yh = self.xfm(x_in)
+            yh_out = self._apply_mask_to_yh(yh, phi=extra_phase)
+            recon = self.ifm((yl, yh_out))
+            if torch.is_complex(recon):
+                recon = recon.real
+
+            m = self._resolve_face_mask(x_in, face_mask)
+            x_prot = apply_linf_residual(x_in, recon, m, self.epsilon)
+
+            if x_prot.shape[-2:] != x.shape[-2:]:
+                x_prot = F.interpolate(
+                    x_prot, size=x.shape[-2:], mode="bilinear", align_corners=False
+                )
+
+            if return_coeffs:
+                return x_prot, yl, yh_out
+            return x_prot
+
         if roi_compose == ROI_COMPOSE_WAVELET:
-            raise NotImplementedError(
-                "roi_compose='wavelet' disponível no Step 7 (Ideia 2). "
-                "Use --roi-compose pixel até lá."
-            )
-        if roi_compose != ROI_COMPOSE_PIXEL:
-            raise ValueError(
-                f"roi_compose inválido: {roi_compose!r}. "
-                f"Válidos agora: {ROI_COMPOSE_PIXEL!r} "
-                f"(wavelet no Step 7)."
-            )
+            # --- Ideia 2: restrict ΔW in wavelet domain; L∞ on full residual ---
+            x_in = self._prepare_input(x)
+            m = self._resolve_face_mask(x_in, face_mask)
+            yl, yh = self.xfm(x_in)
+            yh_out = self._apply_mask_to_yh_wavelet(yh, m, phi=extra_phase)
+            recon = self.ifm((yl, yh_out))
+            if torch.is_complex(recon):
+                recon = recon.real
+            residual = (recon - x_in).clamp(-self.epsilon, self.epsilon)
+            x_prot = (x_in + residual).clamp(0.0, 1.0)
 
-        x_in = self._prepare_input(x)
-        yl, yh = self.xfm(x_in)
-        yh_out = self._apply_mask_to_yh(yh, phi=extra_phase)
-        recon = self.ifm((yl, yh_out))
-        if torch.is_complex(recon):
-            recon = recon.real
+            if x_prot.shape[-2:] != x.shape[-2:]:
+                x_prot = F.interpolate(
+                    x_prot, size=x.shape[-2:], mode="bilinear", align_corners=False
+                )
 
-        m = self._resolve_face_mask(x_in, face_mask)
-        x_prot = apply_linf_residual(x_in, recon, m, self.epsilon)
+            if return_coeffs:
+                return x_prot, yl, yh_out
+            return x_prot
 
-        if x_prot.shape[-2:] != x.shape[-2:]:
-            x_prot = F.interpolate(
-                x_prot, size=x.shape[-2:], mode="bilinear", align_corners=False
-            )
-
-        if return_coeffs:
-            return x_prot, yl, yh_out
-        return x_prot
+        raise ValueError(
+            f"roi_compose inválido: {roi_compose!r}. "
+            f"Válidos: {ROI_COMPOSE_PIXEL!r}, {ROI_COMPOSE_WAVELET!r}."
+        )
