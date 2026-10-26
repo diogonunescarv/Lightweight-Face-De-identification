@@ -11,6 +11,32 @@ Formato sugerido por entrada:
 
 ---
 
+## 2026-10-26 — V2 Step 1: scaffold enxuto + inventário + limpeza GitHub
+Contexto: Step 1 pedia inventário V1, stubs §5 e CLI `train-v2`; usuário pediu branch/GitHub **mínimos** (sem notebooks e sem artefatos de experimento V1).
+Decisão:
+- **Removidos do tracking desta branch:** `notebooks/*`, `EXPERIMENTS.md`, `TODO.md` (permanecem no histórico/`main`; notebooks só no Step 9 se necessário).
+- `.gitignore`: `notebooks/`; `scripts/*` com exceção `scripts/run_v2_*.sh`.
+- Stubs mínimos (só nomes do §5, `NotImplementedError`): `models/dtcwt_meta_mask.py`, `models/fr/`, `losses/identity.py`, `losses/quality.py`, `data/merged_split.py`, `training/trainer_v2.py`, `evaluation/validate_v2.py`.
+- CLI: `train-v2` reconhecido; imprime “not implemented” e sai ≠0.
+- Tokens ROI V1 confirmados em `masks.py` (`UNITARY`+`COMPOSITE` = V2.md §3.1.1).
+### Inventário V1 (treino) — o que fica / move / some
+| Módulo | Papel V1 | V2 |
+|--------|----------|-----|
+| `models/transformer.py` | DCT/DT-CWT global + flow + photo | legado; treino V2 não usa |
+| `models/wavelet_transform.py` | DT-CWT decimated | legado / thin wrapper se útil no Step 2 |
+| `models/masks.py` + `face_detector.py` | ROI elipse/band | **compartilhado** first-class |
+| `models/embedders.py` | FaceNet | smoke/V1; ensemble → `models/fr/` (Step 4) |
+| `losses/losses.py` | hinge cos + SSIM + TV/L2/flow | V1; V2 → `identity.py` + `quality.py` |
+| `training/trainer.py` | steps + ES | legado; V2 → `trainer_v2.py` |
+| `utils/checkpoint.py` / `scheduler.py` | ckpt V1 / LR | V1; V2 ckpt próprio no trainer |
+| Flags DCT/flow/photo/`lambda-*` V1 | CLI `train` | mortas no path `train-v2` (não remover ainda) |
+| Flags máscara / `ssim-region` | CLI | **permanecem** |
+### Cleanup targets (próximos steps)
+- [ ] Step 2: extrair meta-máscara; desacoplar `resolve_face_mask` de `LightweightDeIdentifier` se necessário
+- [ ] Step 9: docs mortos / flags obsoletas no README; SSIM canônico único
+- [ ] Não reintroduzir notebooks/EXPERIMENTS no GitHub sem necessidade
+Resultado: ver `tests/test_v2_01_scaffold.py`. Gate: autorização do usuário → Step 2.
+
 ## 2026-10-26 — Início V2 — DT-CWT meta-máscara + ROI (`feature/v2-dtcwt-meta-mask`)
 Contexto: a V1 (DCT/wavelet global + flow/photo) saturava o trade-off cos×SSIM e máscaras parciais falhavam em desidentificar. O projeto irmão `dtcwt_mask_optimization` (Phase 3.3) validou meta-máscara espacial DT-CWT + SignSGD + loss cos+SSIM hinge.
 Decisão:
@@ -19,7 +45,7 @@ Decisão:
 - Ordem fixa de composição ROI via `--roi-compose`: **Ideia 1 `pixel` primeiro** (ΔW full → IDT-CWT → residual⊙M → L∞); **Ideia 2 `wavelet` depois** (ΔW⊙M_ℓ; sem regressão no path `pixel`).
 - Sem warm-start online nesta V2 (→ V2.1). Notebooks fora do escopo até Step 9 (só viz).
 - Código V1 permanece atrás de CLI legada; checkpoints V1 não carregam no módulo V2.
-Resultado: Step 0 concluído (branch + higiene). Próximo: Step 1 (scaffold + inventário).
+Resultado: Step 0 concluído (branch + higiene).
 
 ## 2026-09-21 — Filtro frontal pose≤25° + oclusões (TODO item 6)
 Contexto: treinos/avaliações precisam de faces quase frontais sem oclusões grosseiras (óculos escuros, máscaras). Alinhamento por landmarks (itens 1–2) é ortogonal; aqui só **seleção**. LFW tem dois splits (`faces_train` / `faces_test`) a preservar.

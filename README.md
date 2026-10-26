@@ -28,7 +28,9 @@ Este projeto implementa uma transformação facial leve para desidentificação 
 
 ## Roadmap V2
 
-A evolução **V2** (DT-CWT meta-máscara espacial + ROI, sem warp/photo/DCT no path novo) está especificada em [`V2.md`](V2.md). Trabalho na branch `feature/v2-dtcwt-meta-mask`. Até a V2 estabilizar, o treino documentado abaixo permanece o caminho **V1 (legado)**.
+A evolução **V2** (DT-CWT meta-máscara espacial + ROI, sem warp/photo/DCT no path novo) está especificada em [`V2.md`](V2.md). Trabalho na branch `feature/v2-dtcwt-meta-mask`.
+
+Nesta branch o tracking GitHub é **enxuto**: sem `notebooks/`, sem `EXPERIMENTS.md`/`TODO.md` (histórico V1 no `main`). CLI `train-v2` existe como stub até o Step 6. Até a V2 estabilizar, o treino documentado abaixo permanece o caminho **V1 (legado)**.
 
 ## Requisitos
 

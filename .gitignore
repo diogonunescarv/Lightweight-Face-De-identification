@@ -1,10 +1,18 @@
 .venv/
 __pycache__/
-scripts/
+*.py[cod]
 .cline/
-notebooks/outputs/
+.cache/
+*.npy
 
-# V2 runs / artifacts (never commit weights, logs, previews, or local datasets)
+# Notebooks: locais / dissertação — não sobem no GitHub nesta branch V2
+notebooks/
+
+# Scripts V1 locais; só runners V2 versionados
+scripts/*
+!scripts/run_v2_*.sh
+
+# V2 runs / artifacts
 *.pt
 *.pth
 *.onnx
@@ -23,5 +31,3 @@ eval_metrics.csv
 # Local datasets / caches
 data/raw/
 data/cache/
-.cache/
-*.npz

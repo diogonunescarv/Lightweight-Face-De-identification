@@ -3,6 +3,8 @@
 """
 
 import argparse
+import sys
+
 from training.trainer import train
 from inference.apply import apply_transform
 from evaluation.evaluate import evaluate
@@ -314,6 +316,14 @@ def build_parser():
     add_mask_args(p_eval_single)
     add_ssim_region_arg(p_eval_single)
 
+    # -------------------------
+    # train-v2 (scaffold — Step 1; logic from Step 6+)
+    # -------------------------
+    sub.add_parser(
+        "train-v2",
+        help="Treino V2 (DT-CWT meta-máscara + ROI). Ainda não implementado (ver V2.md).",
+    )
+
     return parser
 
 
@@ -324,6 +334,13 @@ def main():
     if args.mode == "train":
         validate_train_args(args)
         train(args)
+    elif args.mode == "train-v2":
+        print(
+            "train-v2: not implemented yet (V2 Step 1 scaffold). "
+            "See V2.md Steps 2–6.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     elif args.mode == "apply":
         validate_mask_args(args)
         apply_transform(args)
