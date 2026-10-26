@@ -4,12 +4,12 @@ Este projeto implementa uma transformação facial leve para desidentificação 
 
 ## Sumário
 
-- [Roadmap V2](#roadmap-v2)
+- [Status V2](#status-v2)
 - [Requisitos](#requisitos)
 - [Instalação](#instalação)
 - [Estrutura do código](#estrutura-do-código)
 - [Preparação dos dados](#preparação-dos-dados)
-- [Treinamento](#treinamento)
+- [Treinamento V1 (legado)](#treinamento)
   - [Flags principais](#flags-principais)
   - [Flags de regularização e qualidade](#flags-de-regularização-e-qualidade)
   - [Flags da transformação espectral (DCT / DT‑CWT)](#flags-da-transformação-espectral-dct--dt-cwt)
@@ -26,36 +26,62 @@ Este projeto implementa uma transformação facial leve para desidentificação 
 
 ---
 
-## Roadmap V2
+## Status V2
 
-A evolução **V2** (DT-CWT meta-máscara espacial + ROI, sem warp/photo/DCT) está em [`V2.md`](V2.md) na branch `feature/v2-dtcwt-meta-mask`. Tracking GitHub enxuto (sem notebooks/EXPERIMENTS nesta branch).
+**V2 treinável** (Ideias 1 e 2) na branch `feature/v2-dtcwt-meta-mask`. Spec: [`V2.md`](V2.md). Decisões: [`DECISIONS.md`](DECISIONS.md).  
+Motor: meta-máscara DT-CWT espacial + ROI (`models/masks.py`); **sem** warp/photo/DCT. Artefatos (logs, ckpts, eval, viz) ficam **só** na pasta do run.
 
-### Treino V2 (meta-máscara)
+### Treino rápido
 
 ```bash
-# Ideia 1 (default): aprender ΔW full + encaixar pela ROI no pixel
-bash scripts/run_v2_train_small.sh          # protego + FR small + pixel
-bash scripts/run_v2_train_wavelet.sh        # Ideia 2: ΔW ⊙ M_ℓ
+bash scripts/run_v2_train_small.sh          # campeão: protego + FR small + --roi-compose pixel
+bash scripts/run_v2_train_wavelet.sh        # Ideia 2: --roi-compose wavelet
 bash scripts/run_v2_train_full.sh           # ensemble full (VRAM alto)
 
-# Avaliação (artefatos em <run>/eval/)
 python deid_optimize.py evaluate-v2 \
   --checkpoint /path/to/run/meta_mask_best.pt \
-  --data /path/to/faces --max-samples 16 --no-lpips
+  --data /path/to/faces --max-samples 16 --no-lpips   # → <run>/eval/
+
+python scripts/run_v2_visualize_meta_mask.py \
+  --checkpoint /path/to/run/meta_mask.pt --image face.jpg   # → <run>/viz/
 ```
+
+Smoke sem FR_DB: acrescente `--smoke-fr` (FaceNets built-in). Produção `small`/`full`: `PROTEGO_FR_ROOT` ou `third_party/protego_fr/`.
+
+### `--roi-compose` (Ideia 1 vs 2)
+
+| Valor | Pipeline | Quando |
+|-------|----------|--------|
+| `pixel` (**default**) | ΔW full → IDT-CWT → residual⊙M → L∞ | baseline / regressão |
+| `wavelet` | ΔW⊙M_ℓ → IDT-CWT → L∞ full-frame | ablação Ideia 2 |
+
+Cos e SSIM **sempre** sobre \(x_{\mathrm{prot}}\) final. Flags ROI iguais à V1: `--mask-mode`, `--mask-shape`, `--mask-regions`, `--no-face-mask`, `--ssim-region`.
+
+### Flags `train-v2` (essenciais)
+
+| Flag | Default | Nota |
+|------|---------|------|
+| `--roi-compose` | `pixel` | `pixel` \| `wavelet` |
+| `--optimizer` | `protego` | SignSGD; ou `adam` |
+| `--fr-preset` | `small` | `full` = VRAM alto |
+| `--editable-levels` | `2,3` | nível 1 só ablação (warning) |
+| `--epsilon` | `16/255` | orçamento L∞ |
+| `--min-ssim` | `0.95` | hinge perceptual |
+| `--mask-regions` | `full` | ROI landmarks; ablação: `band` / `--no-face-mask` |
+| `--early-stopping` | on | métrica default `cos` |
+
+Checkpoints V1 **não** carregam no módulo V2. SSIM canônico: `ssim_index` / `ssim_index_masked` em `losses/losses.py` (V1 e V2).
 
 | | V1 (`train`) | V2 (`train-v2`) |
 |--|--------------|-----------------|
 | Motor | DCT/DT-CWT global + flow + photo | DT-CWT meta-máscara espacial |
-| ROI | ellipse/band (mesmas flags) | mesmas flags + `--roi-compose` |
-| `--roi-compose` | — | `pixel` (Ideia 1) \| `wavelet` (Ideia 2) |
+| ROI | ellipse/band | mesmas flags + `--roi-compose` |
 | Loss ID | hinge `target_cos` | mean cos (Phase 3.3) |
-| Otimizador | Adam (+ schedulers) | `protego` (SignSGD) \| `adam` |
-| Checkpoints V1 | `.pt` transformador | **não** carregam no módulo V2 |
+| Otimizador | Adam (+ schedulers) | `protego` \| `adam` |
 
-**Ideia 1 vs 2:** `pixel` = ΔW full → IDT-CWT → residual⊙M → L∞; `wavelet` = ΔW⊙M_ℓ → IDT-CWT → L∞. Cos/SSIM sempre sobre a imagem final protegida.
+### Fora da V2 → **V2.1**
 
-Preset `small`/`full` exige `PROTEGO_FR_ROOT` (FR_DB do projeto irmão). Smoke/local: `--smoke-fr` (FaceNets built-in).
+Warm-start + 1–5 steps online por imagem; eval Phase 5 em massa; dispersão-K / Gram. A V2 só deixa o checkpoint e o `forward(x, face_mask, roi_compose=...)` prontos.
 
 O restante deste README descreve o caminho **V1 (legado)**.
 
@@ -114,29 +140,29 @@ Validação visual: execute `notebooks/validate_face_detector.ipynb` (lê imagen
 
 ```bash
 .
-├── deid_optimize.py               # Ponto de entrada (CLI)
+├── V2.md / DECISIONS.md           # Spec V2 + decisões
+├── deid_optimize.py               # CLI: train-v2 | evaluate-v2 | train (V1) | …
 ├── models/
-│   ├── transformer.py             # Classe LightweightDeIdentifier
-│   ├── embedders.py               # FaceNetEmbedder e load_authorized_embedders
-│   ├── face_detector.py           # SCRFD 2.5G KPS (bbox + 5 landmarks)
-│   ├── masks.py                   # Máscaras elípticas por região (landmarks)
-│   └── wavelet_transform.py       # DT-CWT decimated (DTCWTDecimated)
+│   ├── dtcwt_meta_mask.py         # V2: DTCWTMetaMaskModule (pixel|wavelet)
+│   ├── fr/                        # V2: ensemble FR (presets + FaceNet smoke)
+│   ├── masks.py / face_detector.py  # ROI compartilhada V1/V2
+│   ├── transformer.py             # V1: LightweightDeIdentifier
+│   ├── embedders.py               # FaceNet (V1 / smoke)
+│   └── wavelet_transform.py       # V1 DT-CWT decimated
 ├── data/
-│   ├── dataset.py                 # FaceImageFolder, tensor_to_pil, save_preview
-│   └── transforms.py              # (opcional) aumentos de dados
+│   ├── merged_split.py            # V2: LFW+CelebA frac split
+│   ├── dataset.py / transforms.py
 ├── losses/
-│   └── losses.py                  # identity_loss_ensemble, SSIM, TV, L2
-├── utils/
-│   ├── checkpoint.py              # load_transformer_from_checkpoint
-│   ├── scheduler.py               # WarmupScheduler
-│   └── helpers.py                
-├── evaluation/
-│   ├── evaluate.py                # Avaliação simplificada
-│   └── evaluate_single.py         # Avaliação detalhada (métricas + imagens)
+│   ├── identity.py / quality.py   # V2: cos + SSIM hinge / adapt_w
+│   └── losses.py                  # V1 + SSIM canônico (reusado pela V2)
 ├── training/
-│   └── trainer.py                 # Treinamento do modelo
-├── inference/
-│   └── apply.py                   # Aplicação do modelo em lote
+│   ├── trainer_v2.py              # V2: épocas + SignSGD/Adam + ES
+│   └── trainer.py                 # V1
+├── evaluation/
+│   ├── evaluate_v2.py / validate_v2.py / visualize_v2.py
+│   └── evaluate.py / evaluate_single.py   # V1
+├── inference/apply.py             # V1
+└── scripts/run_v2_*.sh            # runners V2 (treino / testes / viz)
 ```
 
 ## Preparação dos dados

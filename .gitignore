@@ -10,7 +10,7 @@ notebooks/
 
 # Scripts V1 locais; só runners V2 versionados
 scripts/*
-!scripts/run_v2_*.sh
+!scripts/run_v2_*
 
 # V2 runs / artifacts
 *.pt

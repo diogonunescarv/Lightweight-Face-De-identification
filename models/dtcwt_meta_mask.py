@@ -1,11 +1,12 @@
 """
 V2 differentiable DT-CWT spatial meta-mask (Phase 3.3 parity + ROI compose).
 
-Pipeline (``roi_compose="pixel"``, Ideia 1 — default):
+``roi_compose="pixel"`` (Ideia 1 — default):
   x → DT-CWT → yh[ℓ] += ΔW_ℓ · e^{iφ} (editable levels, full-frame)
     → IDT-CWT → residual=(recon−x)⊙M → L∞(ε) → x_prot
 
-``roi_compose="wavelet"`` (Ideia 2) is intentionally unimplemented until Step 7.
+``roi_compose="wavelet"`` (Ideia 2):
+  x → DT-CWT → yh[ℓ] += (ΔW_ℓ ⊙ M_ℓ) · e^{iφ} → IDT-CWT → L∞(ε) full-frame → x_prot
 """
 
 from __future__ import annotations

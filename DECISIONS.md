@@ -11,6 +11,25 @@ Formato sugerido por entrada:
 
 ---
 
+## 2026-10-26 — V2 Step 9: cleanup, docs finais, viz, V2.1
+Contexto: fechar a V2 como **treinável** (Ideias 1 e 2); repo enxuto; sem treinos longos neste step.
+Decisão:
+- **Docs:** README `## Status V2` (<1 página: treino, `--roi-compose`, flags essenciais, V2.1). Árvore de arquivos atualizada. SSIM canônico documentado (`losses/losses.py` ← `quality.py`).
+- **Cleanup:** docstring de `dtcwt_meta_mask.py` alinhada (wavelet implementado). `masks.py` / flags ROI / ambos `roi-compose` preservados. Sem reintroduzir `EXPERIMENTS.md` / `TODO.md`.
+- **Viz:** `evaluation/visualize_v2.py` + `scripts/run_v2_visualize_meta_mask.py` → `<run>/viz/` (orig/prot/resid/mask + painel pixel↔wavelet). Notebook local opcional `notebooks/v2_visualize_meta_mask.ipynb` (gitignore; helpers canônicos no script).
+- **Ablações (protocolo — métricas a validar em runs reais):**
+
+  | Ablação | Comando / flags | Hipótese |
+  |---------|-----------------|----------|
+  | ROI `full` (default) | `--mask-regions full --mask-shape ellipse` | melhor desID (lição V1) |
+  | ROI `band` | `--mask-shape band --mask-regions eyes-nose-mouth` | pode falhar desID (parcial) |
+  | Sem ROI | `--no-face-mask` | paridade pixel≈wavelet; baseline irmão |
+  | Ideia 1 vs 2 | `run_v2_train_small.sh` vs `run_v2_train_wavelet.sh` (mesmos seeds) | comparar cos/SSIM |
+  | Ensemble | `run_v2_train_full.sh` | cos↓ vs `small`; VRAM↑ |
+
+- **V2.1 (não implementar agora):** warm-start + 1–5 steps online; Phase 5 LPIPS batch; dispersão-K/Gram. API pronta: `forward(x, face_mask, roi_compose=...)`.
+Resultado: `test_v2_09` + critérios globais V2.md §9 documentados. Branch pronta para review.
+
 ## 2026-10-26 — V2 Step 8: CLI evaluate-v2 + scripts de treino
 Contexto: UX para experimentos pixel/wavelet e eval autocontido.
 Decisão:
@@ -33,7 +52,7 @@ Decisão:
 - `training/trainer_v2.py`: épocas + ES (`cos` min default); SignSGD `protego_sign_step`; Adam opcional; ckpt atômico `checkpoint_latest.pt` + resume na mesma pasta.
 - Forward meta-máscara **recomputado por FR** (paridade Phase 3.3; sem `retain_graph`).
 - SSIM hinge só no 1º FR; `adapt_percep_weight` após o step.
-- CLI `train-v2` com flags §6; `--roi-compose wavelet` → exit 2 / Step 7.
+- CLI `train-v2` com flags §6; `--roi-compose wavelet` liberado no Step 7.
 - Smoke usa `--smoke-fr` (FaceNets); não é preset de produção.
 - Run autocontido sob `--out-root` (config/train_log/previews/ckpts/summary).
 Resultado: `test_v2_06` 6/6 OK. Gate: autorização → Step 7 (`wavelet`).
@@ -96,9 +115,9 @@ Decisão:
 | Flags DCT/flow/photo/`lambda-*` V1 | CLI `train` | mortas no path `train-v2` (não remover ainda) |
 | Flags máscara / `ssim-region` | CLI | **permanecem** |
 ### Cleanup targets (próximos steps)
-- [ ] Step 2: extrair meta-máscara; desacoplar `resolve_face_mask` de `LightweightDeIdentifier` se necessário
-- [ ] Step 9: docs mortos / flags obsoletas no README; SSIM canônico único
-- [ ] Não reintroduzir notebooks/EXPERIMENTS no GitHub sem necessidade
+- [x] Step 2: extrair meta-máscara; desacoplar `resolve_face_mask` de `LightweightDeIdentifier` se necessário
+- [x] Step 9: docs Status V2 / SSIM canônico único; viz script (notebook só local)
+- [x] Não reintroduzir EXPERIMENTS/TODO; notebooks gitignored (viz via `scripts/run_v2_visualize_meta_mask.py`)
 Resultado: ver `tests/test_v2_01_scaffold.py`. Gate: autorização do usuário → Step 2.
 
 ## 2026-10-26 — Início V2 — DT-CWT meta-máscara + ROI (`feature/v2-dtcwt-meta-mask`)
