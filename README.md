@@ -1,6 +1,6 @@
 # Lightweight Face De-identification
 
-Este projeto implementa uma transformação facial leve para desidentificação visual, preservando a qualidade da imagem. O modelo ajusta uma transformação paramétrica que pode operar no domínio da **DCT** (transformada cosseno) ou da **DT‑CWT** (wavelet complexa de duas árvores), combinada com deformação geométrica suave e ajuste fotométrico local.
+Este projeto implementa uma transformação facial leve para desidentificação visual, preservando a qualidade da imagem. O modelo ajusta uma transformação paramétrica que pode operar no domínio da **DCT** (transformada cosseno) ou da **DT‑CWT** decimated (wavelet complexa de duas árvores, criticamente amostrada), combinada com deformação geométrica suave e ajuste fotométrico local.
 
 ## Sumário
 
@@ -86,7 +86,7 @@ Validação visual: execute `notebooks/validate_face_detector.ipynb` (lê imagen
 │   ├── embedders.py               # FaceNetEmbedder e load_authorized_embedders
 │   ├── face_detector.py           # SCRFD 2.5G KPS (bbox + 5 landmarks)
 │   ├── masks.py                   # Máscaras elípticas por região (landmarks)
-│   └── wavelet_transform.py       # DT-CWT
+│   └── wavelet_transform.py       # DT-CWT decimated (DTCWTDecimated)
 ├── data/
 │   ├── dataset.py                 # FaceImageFolder, tensor_to_pil, save_preview
 │   └── transforms.py              # (opcional) aumentos de dados
@@ -173,15 +173,24 @@ Todos os argumentos estão descritos abaixo.
 
 | Flag | Padrão | Descrição |
 |------|--------|-----------|
-| `--transform-type` | `dct` | Tipo de transformada espectral: `dct` ou `dtcwt`. |
+| `--transform-type` | `dct` | Tipo de transformada espectral: `dct` ou `dtcwt` (DT‑CWT criticamente amostrada / decimated). |
 | `--dct-k` | `32` | Resolução da grade DCT (base de frequência). |
 | `--dct-fmin` | `2` | Frequência mínima a ser perturbada (exclui DC). |
 | `--dct-fmax` | `18` | Frequência máxima a ser perturbada. |
-| `--wavelet-J` | `3` | Número de níveis (escalas) da DT‑CWT. |
-| `--max-wavelet-amp` | `0.2` | Amplitude máxima para modificação de magnitude e fase (escala = 1 ± amp, deslocamento de fase = ± amp rad). |
+| `--wavelet-J` | `3` | Número de níveis (escalas) da DT‑CWT decimated; cada nível reduz a resolução espacial pela metade. |
+| `--max-wavelet-amp` | `0.2` | Fallback de amplitude quando mag/phase não são passados (escala = 1 ± amp, fase = ± amp rad). |
+| `--max-wavelet-mag-amp` | `(=max-wavelet-amp)` | Amplitude máxima da escala de magnitude dos detalhes. |
+| `--max-wavelet-phase-amp` | `(=max-wavelet-amp)` | Amplitude máxima do deslocamento de fase (radianos). |
+| `--wavelet-level-amp-scales` | `1,1,...,1` | Multiplicadores por nível (lista CSV de comprimento J). |
+| `--wavelet-polar-mode` | `complex` | `complex` = polar verdadeiro via `view_as_complex`; `legacy` = abs/angle elemento a elemento no stack real/imag (ckpts antigos). |
+| `--wavelet-per-channel` | off | Mag/fase por canal RGB `(1,3,6,J)`. Exclusivo com spatial grid. |
+| `--wavelet-spatial-grid` | `0` | Se `>0`, mapas espaciais `g×g` de mag/fase `(1,6,J,g,g)`. |
+| `--wavelet-yl-gain` | off | Ganho aprendível na aproximação `Yl`. |
+| `--max-wavelet-yl-amp` | `0.05` | Amplitude máxima do ganho em `Yl`. |
 | `--lambda-wavelet-mag` | `0.01` | Regularização L2 dos parâmetros de escala da wavelet. |
 | `--lambda-wavelet-phase` | `0.01` | Regularização L2 dos parâmetros de fase da wavelet. |
 | `--lambda-wavelet-smooth` | `0.001` | Suavidade entre níveis da wavelet. |
+| `--lambda-wavelet-yl` | `0.01` | Regularização L2 do ganho `Yl` (se `--wavelet-yl-gain`). |
 | `--flow-grid` | `12` | Resolução do campo de fluxo (baixa resolução). |
 | `--photo-grid` | `12` | Resolução do ajuste fotométrico local. |
 | `--max-dct-amp` | `0.035` | Amplitude máxima da perturbação DCT (em escala de pixel). |
@@ -229,7 +238,35 @@ python deid_optimize.py train \
     --lambda-pixel 3.0
 ```
 
-Exemplo para *DT‑CWT* (substitua `--transform-type dtcwt` e adicione as flags específicas):
+Exemplo para *DT‑CWT* **freq-only** (isola o módulo espectral — linha experimental atual):
+
+```bash
+python deid_optimize.py train \
+    --data ./faces_train \
+    --out ./runs/deid_dtcwt_freq \
+    --transform-type dtcwt \
+    --wavelet-J 3 \
+    --wavelet-polar-mode complex \
+    --max-wavelet-mag-amp 0.20 \
+    --max-wavelet-phase-amp 0.20 \
+    --lambda-wavelet-mag 0.01 \
+    --lambda-wavelet-phase 0.01 \
+    --lambda-wavelet-smooth 0.001 \
+    --disable-flow \
+    --disable-photo \
+    --mask-mode landmarks --mask-regions full \
+    --ssim-region full-landmarks \
+    --lambda-id 15 \
+    --target-cos 0.12 \
+    --tau-ssim 0.88 \
+    --lambda-ssim 20.0 \
+    --lambda-pixel 6.0 \
+    --lr 0.008 \
+    --lr-scheduler onecycle \
+    --steps 5000
+```
+
+Exemplo combo (DT‑CWT + flow + photo), fora da linha freq-only:
 
 ```bash
 python deid_optimize.py train \
@@ -241,7 +278,7 @@ python deid_optimize.py train \
     --lambda-wavelet-mag 0.01 \
     --lambda-wavelet-phase 0.01 \
     --lambda-wavelet-smooth 0.001 \
-    --max-dct-amp 0.09 \           # ainda usado como referência, mas não afeta a wavelet
+    --max-dct-amp 0.09 \
     --lambda-id 18 \
     --target-cos 0.12 \
     --max-flow-px 3.5 \
@@ -406,12 +443,14 @@ Saídas: `hparam_search_results.csv` (HP + métricas por trial), `optuna_study.d
 
 **Escopo do SSIM:** por padrão (`--ssim-region full-landmarks`), o SSIM mede qualidade no rosto todo via landmarks, independente da máscara de transformação. Resultados em `EXPERIMENTS.md` anteriores a set/2026 usaram SSIM restrito à máscara de treino (`mask`) — compare SSIM entre experimentos só se o escopo for o mesmo.
 
+**DT‑CWT / freq-only:** a linha experimental de evolução espectral treina com `--disable-flow --disable-photo` para isolar o módulo de frequência. Não compare cos/ssim desses runs diretamente com checkpoints combo (flow+photo) sem ressalva. Com `--wavelet-polar-mode complex` (default em treinos novos), magnitude/fase atuam no coeficiente complexo; checkpoints antigos sem metadado `wavelet_polar_mode` carregam como `legacy`.
+
 (REPENSAR SOBRE)
 
 - **Desidentificação bem‑sucedida**: `cos` < 0.2 e `euclid` > 1.2, mantendo `ssim` > 0.85.
 - **Desidentificação muito agressiva**: `cos` próximo de 0 ou negativo, `euclid` > 1.5 – pode causar artefatos visuais. Nesse caso, reduza `--lambda-id` ou aumente `--tau-ssim`.
-- **Pouca desidentificação**: `cos` > 0.4 – aumente `--lambda-id`, diminua `--target-cos` ou aumente `--max-flow-px` / `--max-dct-amp`.
-- **Qualidade visual baixa**: `ssim` abaixo de 0.8 – aumente `--lambda-ssim`, `--lambda-pixel` ou reduza `--max-flow-px`, `--max-photo-amp`.
+- **Pouca desidentificação**: `cos` > 0.4 – aumente `--lambda-id`, diminua `--target-cos` ou aumente `--max-flow-px` / `--max-dct-amp` / `--max-wavelet-mag-amp` (freq-only).
+- **Qualidade visual baixa**: `ssim` abaixo de 0.8 – aumente `--lambda-ssim`, `--lambda-pixel` ou reduza amplitudes wavelet / flow / photo.
 
 ## Dicas para ajuste fino
 

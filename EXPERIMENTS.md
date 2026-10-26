@@ -90,3 +90,77 @@ Treino completo dos top 3 trials da busca Optuna (tarefa 14), com flags fixos do
 | 2026-09-04 | best_hparams/hparam_search__trial28/transform.pt | 0.0146674 | 24.96 | 4.58 | 0.920 | 29.5 | 1900 (best 1600) | 0.379 | 1.100 | 0.816 | Busca curta score=0.4288; full score=0.437. early_stopped. ~551 s. |
 
 Checkpoints novos em `/mnt/study-data/dcarvalho/tests/best_hparams/`. Avaliação consolidada: `/mnt/study-data/dcarvalho/metrics/best_hparams/summary_all.csv`.
+
+## Polar complex vs legacy — freq-only (2026-09-09)
+
+Protocolo: `--disable-flow --disable-photo`, `dtcwt` J=3, máscara **full-landmarks** (`--mask-mode landmarks --mask-regions full --mask-shape ellipse`), `--ssim-region full-landmarks`, early stopping (`eval-every 100`, `patience 3`, métrica `score`), `max-wavelet-amp=0.20`. Scripts: `run_wavelet_polar_ab.sh`, `compare_wavelet_polar_ab.sh`. **Não comparar** com ckpts combo flow+photo sem ressalva.
+
+| Data | Checkpoint | polar-mode | target-cos | lambda-id | tau-ssim | steps | cos (val) | euclid (val) | ssim (val) | Observação |
+|------|-----------|------------|------------|-----------|----------|-------|-----------|--------------|------------|------------|
+| 2026-09-09 | wavelet_polar_ab/freq_legacy/transform.pt | legacy | 0.12 | 15 | 0.88 | 4000 (best 3700) | 0.996 | 0.090 | 0.998 | early_stopped. Params mag saturados (tanh≈1); desid. quase nula. |
+| 2026-09-09 | wavelet_polar_ab/freq_complex/transform.pt | complex | 0.12 | 15 | 0.88 | 3000 (best 2700) | 0.994 | 0.103 | 0.997 | early_stopped. Ligeiramente melhor que legacy (Δcos −0.002), mas ainda cos≈1. **Baseline freq-only** para fases seguintes. |
+
+Outs: `/mnt/study-data/dcarvalho/tests/wavelet_polar_ab/` · metrics: `/mnt/study-data/dcarvalho/metrics/wavelet_polar_ab/summary_all.csv`.
+
+**Leitura:** com amp≤0.20 e só wavelet, o otimizador satura os 36 params e o embedding quase não muda. Próximo: Fase 2 com amps maiores (mag/phase desacoplados).
+
+## Amp mag/phase split — freq-only (2026-09-12)
+
+Scripts: `run_wavelet_amp_split.sh`, `compare_wavelet_amp_split.sh`. Polar=`complex`, full-landmarks, freq-only. Early stopping. Score = ssim−cos.
+
+| Data | Checkpoint | mag-amp | phase-amp | steps | cos (val) | euclid (val) | ssim (val) | Observação |
+|------|-----------|---------|-----------|-------|-----------|--------------|------------|------------|
+| 2026-09-12 | wavelet_amp_split/freq_cx_mag030_ph040/transform.pt | 0.30 | 0.40 | 4000 (best 3700) | 0.984 | 0.171 | 0.990 | score≈0.006 |
+| 2026-09-12 | wavelet_amp_split/freq_cx_mag040_ph020/transform.pt | 0.40 | 0.20 | 7700 (best 7400) | 0.981 | 0.186 | 0.991 | score≈0.010 |
+| 2026-09-12 | wavelet_amp_split/freq_cx_mag040_ph040/transform.pt | 0.40 | 0.40 | 5500 (best 5200) | 0.976 | 0.209 | 0.988 | score≈0.011 |
+| 2026-09-12 | wavelet_amp_split/freq_cx_mag040_ph080/transform.pt | 0.40 | 0.80 | 4200 (best 3900) | 0.959 | 0.275 | 0.975 | score≈0.015 |
+| 2026-09-12 | wavelet_amp_split/freq_cx_mag060_ph040/transform.pt | 0.60 | 0.40 | 4700 (best 4400) | 0.954 | 0.291 | 0.979 | score≈0.025 |
+| 2026-09-12 | wavelet_amp_split/freq_cx_mag080_ph080/transform.pt | 0.80 | 0.80 | 4700 (best 4400) | 0.914 | 0.397 | 0.961 | **Melhor score≈0.047** e menor cos do grid. SSIM ainda alto. |
+
+Outs: `/mnt/study-data/dcarvalho/tests/wavelet_amp_split/` · metrics: `/mnt/study-data/dcarvalho/metrics/wavelet_amp_split/summary_all.csv`.
+
+**Leitura:** subir amp reduz cos de forma monotônica, mas o piso com 36 params globais fica em cos≳0.91 (longe de &lt;0.2). SSIM permanece &gt;0.96. **Baseline amp para Fase 3:** mag=0.80, phase=0.80 (`freq_cx_mag080_ph080`). Próximo: expressividade (`--wavelet-per-channel`).
+
+## Expressividade wavelet — freq-only (fase 3, sequencial)
+
+HPs base: polar `complex`, mag=0.80, phase=0.80, full-landmarks, freq-only. Scripts: `run_wavelet_per_channel.sh`, `run_wavelet_spatial.sh`, `run_wavelet_yl_gain.sh` (+ `compare_*`).
+
+| Data | Checkpoint | modo | params approx | steps | cos (val) | euclid (val) | ssim (val) | Observação |
+|------|-----------|------|---------------|-------|-----------|--------------|------------|------------|
+| 2026-09-12 | wavelet_amp_split/freq_cx_mag080_ph080/transform.pt | global (ref) | 36 | 4700 (best 4400) | 0.914 | 0.397 | 0.961 | Baseline amp W2. |
+| 2026-09-12 | wavelet_per_channel/freq_cx_perchannel/transform.pt | per-channel | 108 | 4300 (best 4000) | 0.914 | 0.398 | 0.961 | Sem ganho vs global. |
+| 2026-09-12 | wavelet_spatial/freq_cx_spatial_g8/transform.pt | spatial g=8 | 2304 | 10000 (best 9700) | 0.816 | 0.583 | 0.951 | **Melhor isolado** da linha (Δcos −0.10 vs global). |
+| 2026-09-12 | wavelet_yl_gain/freq_cx_yl_gain/transform.pt | Yl gain | 36+1 | 5500 (best 5200) | 0.906 | 0.417 | 0.959 | Ganho leve vs global (Δcos −0.008); Yl satura em escala≈0.95. **Pior que spatial.** |
+
+Outs: spatial `/mnt/study-data/dcarvalho/tests/wavelet_spatial/` · Yl `/mnt/study-data/dcarvalho/tests/wavelet_yl_gain/` · metrics espelhadas em `/mnt/study-data/dcarvalho/metrics/wavelet_{spatial,yl_gain}/`.
+
+**Síntese fase 3:** per-channel inútil; Yl ajuda pouco; **spatial g=8 domina**. Cos ainda ≫0.2. Próximo natural (fora da ordem estrita do plano): **spatial g=8 + Yl** e/ou `g>8`.
+
+## Spatial + Yl — freq-only (2026-09-12, W4)
+
+Script: `run_wavelet_spatial_yl.sh` / `compare_wavelet_spatial_yl.sh`. Polar complex, mag/phase 0.80, `--wavelet-spatial-grid 8 --wavelet-yl-gain` (yl-amp 0.05), full-landmarks, freq-only.
+
+| Data | Checkpoint | modo | steps | cos (val) | euclid (val) | ssim (val) | Observação |
+|------|-----------|------|-------|-----------|--------------|------------|------------|
+| 2026-09-12 | wavelet_spatial/freq_cx_spatial_g8/transform.pt | spatial only | 10000 (best 9700) | 0.816 | 0.583 | 0.951 | Ref W3b. |
+| 2026-09-12 | wavelet_spatial_yl/freq_cx_spatial_g8_yl/transform.pt | spatial+Yl | 10000 (best 9700) | 0.793 | 0.619 | 0.947 | **Melhor da linha** (Δcos −0.023 vs spatial). Yl satura em escala≈0.95. early_stopped=False. |
+
+Outs: `/mnt/study-data/dcarvalho/tests/wavelet_spatial_yl/` · metrics: `/mnt/study-data/dcarvalho/metrics/wavelet_spatial_yl/summary_all.csv`.
+
+**Leitura W4:** Yl é aditivo sobre spatial (sem colapso de SSIM). Bound `max-wavelet-yl-amp=0.05` satura → próximo: subir yl-amp e/ou `g=12`.
+
+## Spatial+Yl amp / g sweep — freq-only (2026-09-14, W5)
+
+Scripts: `run_wavelet_spatial_yl_sweep.sh` / `compare_wavelet_spatial_yl_sweep.sh`. Polar complex, mag/phase 0.80, full-landmarks, freq-only. Score = ssim−cos. Ref W4: g=8 yl=0.05 → cos=0.793, ssim=0.947, score≈0.155.
+
+| Data | Checkpoint | g | yl-amp | steps | cos (val) | euclid (val) | ssim (val) | Observação |
+|------|-----------|---|--------|-------|-----------|--------------|------------|------------|
+| 2026-09-12 | wavelet_spatial_yl/freq_cx_spatial_g8_yl/transform.pt | 8 | 0.05 | 10000 (best 9700) | 0.793 | 0.619 | 0.947 | Ref W4. score≈0.155 |
+| 2026-09-14 | wavelet_spatial_yl_sweep/freq_cx_g12_yl005/transform.pt | 12 | 0.05 | 10000 (best 9900) | 0.779 | 0.641 | 0.947 | score≈0.168; g↑ ajuda pouco com yl baixo |
+| 2026-09-14 | wavelet_spatial_yl_sweep/freq_cx_g8_yl010/transform.pt | 8 | 0.10 | 10000 (best 9700) | 0.766 | 0.660 | 0.941 | score≈0.175 |
+| 2026-09-14 | wavelet_spatial_yl_sweep/freq_cx_g12_yl010/transform.pt | 12 | 0.10 | 10000 (best 9700) | 0.753 | 0.679 | 0.940 | score≈0.187 |
+| 2026-09-14 | wavelet_spatial_yl_sweep/freq_cx_g8_yl015/transform.pt | 8 | 0.15 | 9900 (best 9600) | 0.736 | 0.703 | 0.930 | **Melhor score≈0.194** e menor cos do sweep. Yl satura em escala=0.85. |
+
+Outs: `/mnt/study-data/dcarvalho/tests/wavelet_spatial_yl_sweep/` · metrics: `/mnt/study-data/dcarvalho/metrics/wavelet_spatial_yl_sweep/summary_all.csv`.
+
+**Leitura W5:** subir `yl-amp` é a alavanca dominante; `g=12` vs `g=8` no mesmo yl dá ganho menor. **Baseline freq-only final:** `g=8`, `yl-amp=0.15`, mag/phase=0.80 (cos=0.736, ssim=0.930). Cos ainda ≫0.2 → retornos decrescentes na linha só-frequência.

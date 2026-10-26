@@ -11,6 +11,150 @@ Formato sugerido por entrada:
 
 ---
 
+## 2026-09-21 — Filtro frontal pose≤25° + oclusões (TODO item 6)
+Contexto: treinos/avaliações precisam de faces quase frontais sem oclusões grosseiras (óculos escuros, máscaras). Alinhamento por landmarks (itens 1–2) é ortogonal; aqui só **seleção**. LFW tem dois splits (`faces_train` / `faces_test`) a preservar.
+Decisão:
+- Notebook canônico: `notebooks/filter_frontal_datasets.ipynb` (inspeção LFW → helpers → QA visual → batch retomável com JSONL). Espelho CLI opcional: `scripts/filter_frontal_datasets.py`.
+- Pose: InsightFace `buffalo_m` + `landmark_3d_68` (`1k3d68.onnx`), `det_size=(224,224)`; keep se `max(|pitch|,|yaw|,|roll|) ≤ 25`. **Não** altera `models/face_detector.py` (treino continua só com detection).
+- Oclusão (heurística, sem dep nova): óculos escuros se `eye_mean < 55` ou (`eye_mean < 65` e `eye_std < 22`); máscara se `mouth_std < 16` ou (`mouth_std < 22` e `|mouth−cheek| < 18`). Thresholds calibráveis no notebook.
+- Saídas irmãs (sem sobrescrever fontes): `celebahq_pp_frontal`, `lfw_frontal/{faces_train,faces_test}`.
+Resultado (batch completo; `notebooks/outputs/filter_frontal/summary.json`):
+- **celebahq_pp:** kept **24722 / 29995** (desc. 17.6%) — pose 3466, sunglasses 1082, mask 721, no_face 4
+- **lfw/faces_train:** kept **8226 / 10586** (desc. 22.3%) — mask 1456, sunglasses 456, pose 440, no_face 8
+- **lfw/faces_test:** kept **2029 / 2647** (desc. 23.3%) — mask 383, sunglasses 114, pose 118, no_face 3
+- Observação: em LFW a razão `mask` é alta (possível falso positivo da heurística de boca lisa) — validar visualmente na seção QA do notebook antes de confiar cegamente; se necessário, afrouxar `MOUTH_*` e re-filtrar.
+- Scripts de treino ainda apontam aos paths não-frontais; trocar `--data` para `*_frontal` quando desejado.
+
+## 2026-09-15 — Inversão local de fase φ+π sob máscara full (TODO item 5)
+Contexto: segunda referência agressiva em fase DT-CWT — determinística (cristas↔vales / “negativo estrutural”), mag intacta, mesmas imagens e máscara full do item 4.
+Decisão: seção (g) em `notebooks/dtcwt_modifications_tests.ipynb` — `invert_phase_yh` (φ+π ≡ −c) reusando `dtcwt_*` / blend / métricas da (f); tabela `rows_phase_invert` + comparativo `rows_compare` vs `rows_phase_random`.
+Resultado (n=5, mesmas imgs do item 4):
+- SSIM_mask / SSIM_full φ+π (média): **0.2812 / 0.6869**
+- cos / euclid φ+π (média): **0.7388 / 0.7178**
+- Demo 1 img: cos=0.7145, ssim_full=0.7487, ssim_mask=0.4788
+- vs rand (médias): cos_rnd **0.8141** vs cos_inv **0.7388**; SSIM_mask_rnd **0.6733** vs SSIM_mask_inv **0.2812**
+- Qual derruba mais identidade (menor cos)? **inv φ+π** (Δcos ≈ −0.075 vs rand)
+- Qual derruba mais SSIM_mask? **inv φ+π** (quase 2.4× mais dano estrutural que rand)
+- Observação: φ+π gera artefato mais “negativo estrutural” / contraste invertido na máscara (SSIM_mask cai a ~0.28); rand parece ruído textural com SSIM_mask mais alto (~0.67). Em ambos os casos FaceNet ainda fica com cos ≫ 0.5 (inv ~0.74) — longe do alvo cos&lt;0.5 / &lt;0.2. Conclusão: só mexer em fase de Yh (rand ou +π), com mag+Yl intactos, **não basta** para desidentificação útil; próximo é mexer em mag/Yl ou reintroduzir flow/photo (W6).
+
+## 2026-09-15 — Fase aleatória U[-π,π] sob máscara full (TODO item 4)
+Contexto: referência de agressividade máxima em fase DT-CWT (congruência de fase destruída), mag intacta, só dentro da máscara full.
+Decisão: seção (f) no notebook `dtcwt_modifications_tests.ipynb` — helpers `dtcwt_forward/inverse`, `randomize_phase_yh`, blend com máscara; métricas FaceNet + `ssim_index` / `ssim_index_masked`. Dataset: 5 imgs LFW (`PHASE_N=5`).
+Resultado (n=5):
+- SSIM_mask recon fiel (média): **0.9986** (IDT-CWT fiel ≈1, OK)
+- SSIM_mask / SSIM_full fase rand (média): **0.6733 / 0.8567**
+- cos / euclid fase rand (média): **0.8141 / 0.6012**
+- Demo 1 img: cos=0.750, ssim_full=0.893, ssim_mask=0.777
+- Hipótese “SSIM_mask ≈ 0 e identidade destruída”: **rejeitada**. Face visualmente bem danificada (ruído/textura na máscara), mas FaceNet mantém cos ≫ 0.5 (média 0.81; min observado ~0.73). Longe do alvo cos&lt;0.5 e do alvo prático cos&lt;0.2.
+- Interpretação: destruir só a fase dos detalhes (Yh), preservando magnitude e Yl, **não basta** para quebrar embedding — identidade FaceNet parece ancorada em energia/baixa frequência ainda intactas. Próximo: item 5 (inversão φ+π) para contraste; depois estratégias que mexam em mag/Yl ou reintroduzam flow/photo (W6).
+
+## 2026-09-15 — Notebook base DT-CWT (TODO item 3)
+Contexto: exploração manual de modificações DT-CWT sob máscara full; item 3 pedia células (a)–(e) sem dependência nova.
+Decisão:
+- Notebook `notebooks/dtcwt_modifications_tests.ipynb`: imports do projeto (`DTCWTDecimated`/`pytorch_wavelets`, `FaceNetEmbedder`, SCRFD, `build_region_mask`).
+- Datasets: preferir `celebahq_pp_norm` / `lfw_norm/faces_train`; se ausentes, fallback para `celebahq_pp` e `lfw/faces_train` (paths dos scripts wavelet).
+- LBP via `skimage.feature.local_binary_pattern` (P=8, R=1); `scikit-image` adicionado ao `requirements.txt`.
+Resultado: **a validar** pelo usuário (célula a célula); sem execução pelo agente.
+
+## 2026-09-14 — Sweep spatial×Yl (W5) + fechamento da linha freq-only
+Contexto: W4 (g=8, yl=0.05, cos=0.793) saturava Yl; sweep g∈{8,12} × yl∈{0.05,0.10,0.15}.
+Decisão: **baseline freq-only final = g=8, yl-amp=0.15, mag/phase=0.80** (`freq_cx_g8_yl015`). Encerrar ablações só-frequência: cos caiu ~0.99→0.74 com ssim≥0.93, mas longe do alvo cos&lt;0.2; próximo salto útil é **reintroduzir flow/photo** em cima desse espectro (ou aceitar freq-only como contribuição/ablation da dissertação).
+Resultado (evaluate-single, 200 imgs; score=ssim−cos):
+- g8 yl0.05 (W4): cos=0.793, ssim=0.947, score≈0.155
+- g12 yl0.05: cos=0.779, ssim=0.947, score≈0.168
+- g8 yl0.10: cos=0.766, ssim=0.941, score≈0.175
+- g12 yl0.10: cos=0.753, ssim=0.940, score≈0.187
+- **g8 yl0.15: cos=0.736, ssim=0.930, score≈0.194** (melhor)
+- Yl sempre satura no bound (`scale=1−yl_amp`). g=12 não supera g=8 no mesmo yl-amp alto.
+- Opcional residual (1 run): g=8 yl=0.20 — senão fechar a linha.
+
+## 2026-09-12 — Spatial g=8 + Yl (freq-only, W4)
+Contexto: combinar melhor isolado (spatial) com Yl; mag/phase 0.80, yl-amp 0.05, full-landmarks, freq-only.
+Decisão: **spatial+Yl é o novo melhor** da linha (cos=0.793). Yl continua saturando no bound 0.05 → vale subir `max-wavelet-yl-amp` e testar `g=12`.
+Resultado (evaluate-single, 200 imgs):
+- spatial+Yl: cos=0.793, euclid=0.619, ssim=0.947 (10000 steps, best 9700, early_stopped=False); score≈0.155
+- vs spatial only: Δcos −0.023, Δssim −0.004
+- Ainda cos≫0.2. Próximo: sweep yl-amp ∈ {0.10,0.15} e g ∈ {8,12}.
+
+## 2026-09-12 — Yl gain isolado (freq-only, W3c) + fechamento fase 3
+Contexto: último item isolado do plano; mag/phase 0.80 + `--wavelet-yl-gain` (amp 0.05) sem spatial.
+Decisão: fase 3 **encerrada**. Ranking freq-only: **spatial g=8 ≫ Yl ≈ global ≈ per-channel**. Próximo experimento: **spatial+Yl** (e opcionalmente g maior), não mais ablações isoladas pequenas.
+Resultado (evaluate-single, 200 imgs):
+- Yl: cos=0.906, euclid=0.417, ssim=0.959 (stopped 5500 / best 5200); ganho Yl satura em escala≈0.95
+- vs global: Δcos −0.008; vs spatial g=8 (cos=0.816): bem inferior
+- Plano original (polar → amp → per-ch → spatial → Yl) concluído em código+métricas.
+
+## 2026-09-12 — Spatial grid g=8 (freq-only, W3b)
+Contexto: per-channel não ganhou; testar mapas espaciais `(1,6,J,8,8)×2` ≈2304 params, mag/phase 0.80, polar complex, full-landmarks, freq-only.
+Decisão: **spatial g=8 é o melhor checkpoint freq-only até agora**; vira referência para evoluções seguintes (combo com Yl / g maior).
+Resultado (evaluate-single, 200 imgs):
+- spatial g=8: cos=0.816, euclid=0.583, ssim=0.951 (steps 10000, best 9700, early_stopped=False)
+- vs global 0.80/0.80: Δcos −0.098, Δeuclid +0.186, Δssim −0.010
+- Ainda cos≫0.2, mas primeira alavanca estrutural útil. Próximo no plano: Yl gain isolado (`run_wavelet_yl_gain.sh`).
+
+## 2026-09-12 — Per-channel wavelet (freq-only, W3a)
+Contexto: 108 params `(1,3,6,J)×2` com mag/phase 0.80, polar complex, full-landmarks, freq-only.
+Decisão: **não** adotar per-channel como upgrade — métricas idênticas ao global 36-param.
+Resultado (evaluate-single, 200 imgs):
+- per-channel: cos=0.914, euclid=0.398, ssim=0.961 (stopped 4300 / best 4000)
+- ref mag080/ph080: cos=0.914, euclid=0.397, ssim=0.961
+- Próximo: `--wavelet-spatial-grid 8` (~2304 params), mesmos amps 0.80/0.80.
+
+## 2026-09-12 — Amp mag/phase split (freq-only)
+Contexto: polar `complex` com amp 0.20 deixava cos≈0.99; grid com mag∈{0.3…0.8} e phase∈{0.2…0.8}, full-landmarks, `--disable-flow --disable-photo`.
+Decisão: baseline amp da linha = **mag=0.80, phase=0.80** (`freq_cx_mag080_ph080`) — melhor score e menor cos do grid, SSIM ainda 0.961.
+Resultado (evaluate-single, 200 imgs):
+- cos cai de ~0.98 (amps baixos) até **0.914** (0.80/0.80); euclid até 0.397; ssim sempre ≥0.961.
+- Ainda **longe** do alvo prático (cos&lt;0.2). 36 params globais parecem insuficientes → seguir Fase 3 com expressividade, partindo de 0.80/0.80.
+- Ordem: per-channel → spatial g=8 → Yl gain.
+
+## 2026-09-09 — Resultado A/B polar freq-only (amp 0.20)
+Contexto: treinos `freq_legacy` vs `freq_complex` com full-landmarks, `--disable-flow --disable-photo`, early stopping.
+Decisão: adotar **`complex` como baseline** da linha espectral (ligeira vantagem em cos/euclid); manter `legacy` só para ckpts antigos.
+Resultado (evaluate-single, 200 imgs, full-landmarks):
+- legacy: cos=0.996, euclid=0.090, ssim=0.998 (stopped 4000 / best 3700)
+- complex: cos=0.994, euclid=0.103, ssim=0.997 (stopped 3000 / best 2700)
+- Ambos **falham** em desidentificação (cos≈1). Pesos mag saturam em ±tanh≈1 → o bound `max-wavelet-amp=0.20` é o gargalo, não o modo polar.
+- Próximo: Fase 2 (`run_wavelet_amp_split.sh`) com amps maiores e mag/phase desacoplados, ainda freq-only + complex.
+
+## 2026-09-09 — Polar DT-CWT complexo + linha freq-only
+Contexto: a perturbação wavelet pretendia operar em forma polar nos coeficientes complexos, mas o pytorch-wavelets devolve `Yh[j]` como `[B,C,6,H,W,2]` (real/imag). `torch.abs`/`torch.angle` no tensor real tratavam real e imag separadamente (modo legado). Além disso, a evolução espectral precisa ser isolada de flow/photo.
+Decisão:
+- `--wavelet-polar-mode complex|legacy` (default treino: `complex`); ckpts sem metadado carregam como `legacy`.
+- Polar complexo: `view_as_complex` → escala/fase → `view_as_real` antes da inversa.
+- Amps separados: `--max-wavelet-mag-amp` / `--max-wavelet-phase-amp` (+ `--wavelet-level-amp-scales`).
+- Expressividade (um modo por vez): `--wavelet-per-channel`, `--wavelet-spatial-grid g`, `--wavelet-yl-gain`.
+- **Treinos desta linha:** sempre `--disable-flow --disable-photo` (freq-only); máscara de transformação `--mask-mode landmarks --mask-regions full` (full-landmarks) + `--ssim-region full-landmarks`. HPs ajustáveis visando SSIM alto.
+- Notebook: `notebooks/wavelet_polar_debug.ipynb`. Scripts: `scripts/run_wavelet_polar_ab.sh`, `run_wavelet_amp_split.sh`, `run_wavelet_per_channel.sh`, `run_wavelet_spatial.sh`, `run_wavelet_yl_gain.sh` (+ `compare_*`).
+Resultado: código e scripts prontos; A/B polar preenchido em EXPERIMENTS (amp 0.20 insuficiente — ver entrada acima).
+
+## 2026-09-04 — Normalização por landmarks (celebahq_pp, item 1)
+Contexto: `celebahq_pp` já está em 224×224 via `norm_crop`, mas landmarks ainda variam entre imagens; falta refine ao template ArcFace fixo. Um template alternativo (face mais alta/maior, típico de pipeline de template visual em 112×112) em cima de `celebahq_pp` força scale≈1.12 e ty≈−50; com `BORDER_REFLECT_101` gerava espelhamento na base.
+Decisão:
+- Notebook `notebooks/normalize_landmarks.ipynb` reusa `models/face_detector.py` (SCRFD); `TEMPLATE_NAME` escolhe o destino.
+- **Default `arcface`:** `arcface_dst * (224/112)` — mesmo destino do `norm_crop` → `celebahq_pp_norm/`.
+- **Opcional `visual`:** template do pipeline externo (olhos ~y=68) — só comparação / célula de teste no notebook (`plot_before_after(..., template="visual")`); não é o padrão do projeto. Batch opcional em `celebahq_pp_norm_visual/`.
+- Similaridade: `cv2.estimateAffinePartial2D(..., method=LMEDS)` → `warpAffine` 224×224, `BORDER_CONSTANT` (borderValue=0), JPEG q=95.
+- `_to_bgr_uint8`: ndarray tratado como BGR (sem heurística RGB) — evita inversão de cores no refine.
+Resultado (batch `arcface`):
+- processadas / descartadas: **29989 / 6** (entrada 29995)
+- taxa de descarte: **0.020%**
+- tamanho final: **29989** JPEGs em `/mnt/study-data/dcarvalho/datasets/celebahq_pp_norm/`
+- validação visual 3 exemplos (`arcface`): OK (refine fino, cores preservadas)
+
+## 2026-09-04 — Normalização por landmarks (LFW, item 2)
+Contexto: repetir o refine da tarefa 1 no LFW. Fontes do projeto em `lfw/faces_{train,test}` já estão em 224×224; o TODO prevê fontes 256×256 com center crop antes do alinhamento.
+Decisão:
+- Mesmo notebook `normalize_landmarks.ipynb`, seção Item 2.
+- `center_crop_to(256→224)` sem resize; se já 224×224, crop é identidade.
+- Template default = `TEMPLATE_NAME` (`arcface`); saída `/mnt/study-data/dcarvalho/datasets/lfw_norm/{faces_train,faces_test}`.
+- Validação 3 exemplos + batch manual (não disparar automaticamente).
+Resultado: **a validar** após run manual — preencher:
+- processadas / descartadas: ___ / ___
+- taxa de descarte: ___%
+- tamanho final (train+test): ___
+- crop aplicado (256→224 vs identidade em 224): ___
+
 ## 2026-09-04 — Top-3 HP da busca vs base fixa (item 16)
 Contexto: busca Optuna (tarefa 14) encontrou trials com score > baseline curto; falta treino completo e comparação justa com `mid_combo_amp20_flow45_nopx` antes de trocar a base dos próximos experimentos de máscara.
 Decisão:

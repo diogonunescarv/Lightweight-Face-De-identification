@@ -62,6 +62,25 @@ def build_elliptic_face_mask(h: int, w: int, device: torch.device) -> torch.Tens
 
     return mask[None, None, :, :]
 
+def parse_wavelet_level_amp_scales(
+    scales: str | tuple[float, ...] | list[float] | None,
+    wavelet_J: int,
+) -> tuple[float, ...]:
+    """Parse per-level amplitude multipliers; default all ones."""
+    if scales is None or scales == "":
+        return tuple(1.0 for _ in range(wavelet_J))
+    if isinstance(scales, str):
+        parts = [p.strip() for p in scales.split(",") if p.strip()]
+        values = tuple(float(p) for p in parts)
+    else:
+        values = tuple(float(s) for s in scales)
+    if len(values) != wavelet_J:
+        raise ValueError(
+            f"wavelet_level_amp_scales must have length wavelet_J={wavelet_J}, got {len(values)}"
+        )
+    return values
+
+
 class LightweightDeIdentifier(nn.Module):
     """
     T_theta(x) = P_theta(G_theta(W_theta(x)))
@@ -75,12 +94,20 @@ class LightweightDeIdentifier(nn.Module):
     def __init__(
         self,
         image_size: int = 224,
-        transform_type: str = "dct", # "dct" ou "dt-cwt"
+        transform_type: str = "dct",  # "dct" ou "dtcwt"
         dct_k: int = 32,
         dct_fmin: int = 2,
         dct_fmax: int = 18,
-        wavelet_J: int = 3,                    # níveis da wavelet
-        max_wavelet_amp: float = 0.2,          # amplitude máxima para escala/fase
+        wavelet_J: int = 3,
+        max_wavelet_amp: float = 0.2,
+        max_wavelet_mag_amp: float | None = None,
+        max_wavelet_phase_amp: float | None = None,
+        wavelet_level_amp_scales: str | tuple[float, ...] | list[float] | None = None,
+        wavelet_polar_mode: str = "complex",
+        wavelet_per_channel: bool = False,
+        wavelet_spatial_grid: int = 0,
+        wavelet_yl_gain: bool = False,
+        max_wavelet_yl_amp: float = 0.05,
         flow_grid: int = 12,
         photo_grid: int = 12,
         max_dct_amp: float = 0.035,
@@ -90,15 +117,47 @@ class LightweightDeIdentifier(nn.Module):
         mask_mode: str = "fixed",
         mask_regions: tuple[str, ...] = ("full",),
         mask_shape: str = "ellipse",
-        disable_dct: bool = False,            # desabilita transformada espectral (DCT ou wavelet)
+        disable_dct: bool = False,
         disable_flow: bool = False,
         disable_photo: bool = False,
     ):
         super().__init__()
 
+        if wavelet_polar_mode not in ("complex", "legacy"):
+            raise ValueError(
+                f"wavelet_polar_mode must be 'complex' or 'legacy', got {wavelet_polar_mode!r}"
+            )
+        if wavelet_per_channel and wavelet_spatial_grid > 0:
+            raise ValueError(
+                "wavelet_per_channel and wavelet_spatial_grid>0 are mutually exclusive "
+                "(enable one expressivity mode at a time)."
+            )
+        if wavelet_spatial_grid < 0:
+            raise ValueError("wavelet_spatial_grid must be >= 0")
+        if wavelet_polar_mode == "legacy" and (
+            wavelet_per_channel or wavelet_spatial_grid > 0 or wavelet_yl_gain
+        ):
+            raise ValueError(
+                "legacy wavelet_polar_mode only supports global (1,6,J) mag/phase params"
+            )
+
         self.transform_type = transform_type
         self.wavelet_J = wavelet_J
         self.max_wavelet_amp = max_wavelet_amp
+        self.max_wavelet_mag_amp = (
+            max_wavelet_amp if max_wavelet_mag_amp is None else max_wavelet_mag_amp
+        )
+        self.max_wavelet_phase_amp = (
+            max_wavelet_amp if max_wavelet_phase_amp is None else max_wavelet_phase_amp
+        )
+        self.wavelet_level_amp_scales = parse_wavelet_level_amp_scales(
+            wavelet_level_amp_scales, wavelet_J
+        )
+        self.wavelet_polar_mode = wavelet_polar_mode
+        self.wavelet_per_channel = wavelet_per_channel
+        self.wavelet_spatial_grid = int(wavelet_spatial_grid)
+        self.wavelet_yl_gain = wavelet_yl_gain
+        self.max_wavelet_yl_amp = max_wavelet_yl_amp
 
         self.image_size = image_size
         self.dct_k = dct_k
@@ -123,19 +182,46 @@ class LightweightDeIdentifier(nn.Module):
         self.raw_dct = nn.Parameter(torch.zeros(1, 3, self.dct_k, self.dct_k))
 
         # ----- Parâmetros DT-CWT (somente se transform_type == 'dtcwt') -----
-        if transform_type == 'dtcwt':
-            from .wavelet_transform import DTCWTUndecimated  # ou define no mesmo arquivo
-            self.wavelet = DTCWTUndecimated(J=wavelet_J)
-            # Parâmetros por nível (J) e orientação (6)
-            self.raw_wavelet_mag_scale = nn.Parameter(torch.zeros(1, 6, wavelet_J))
-            self.raw_wavelet_phase_shift = nn.Parameter(torch.zeros(1, 6, wavelet_J))
+        if transform_type == "dtcwt":
+            from .wavelet_transform import DTCWTDecimated
+
+            self.wavelet = DTCWTDecimated(J=wavelet_J)
+            g = self.wavelet_spatial_grid
+            if g > 0:
+                # [1, 6, J, g, g] — mapas espaciais de baixa resolução
+                self.raw_wavelet_mag_scale = nn.Parameter(
+                    torch.zeros(1, 6, wavelet_J, g, g)
+                )
+                self.raw_wavelet_phase_shift = nn.Parameter(
+                    torch.zeros(1, 6, wavelet_J, g, g)
+                )
+            elif wavelet_per_channel:
+                # [1, 3, 6, J]
+                self.raw_wavelet_mag_scale = nn.Parameter(
+                    torch.zeros(1, 3, 6, wavelet_J)
+                )
+                self.raw_wavelet_phase_shift = nn.Parameter(
+                    torch.zeros(1, 3, 6, wavelet_J)
+                )
+            else:
+                # [1, 6, J] — global por orientação × nível
+                self.raw_wavelet_mag_scale = nn.Parameter(torch.zeros(1, 6, wavelet_J))
+                self.raw_wavelet_phase_shift = nn.Parameter(
+                    torch.zeros(1, 6, wavelet_J)
+                )
+
+            if wavelet_yl_gain:
+                self.raw_wavelet_yl_gain = nn.Parameter(torch.zeros(1, 1, 1, 1))
+            else:
+                self.raw_wavelet_yl_gain = None
         else:
             self.wavelet = None
             self.raw_wavelet_mag_scale = None
             self.raw_wavelet_phase_shift = None
+            self.raw_wavelet_yl_gain = None
 
         # ----- Parâmetros comuns (flow, photo) ----
-        
+
         # Campo de fluxo universal em baixa resolução.
         # Canal 0 = deslocamento horizontal em pixels.
         # Canal 1 = deslocamento vertical em pixels.
@@ -235,6 +321,67 @@ class LightweightDeIdentifier(nn.Module):
         """
         return self.get_fixed_face_mask(device).expand(batch_size, -1, -1, -1)
 
+    def _wavelet_level_modulators(
+        self, level: int, spatial_hw: tuple[int, int]
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return (scale, phase_shift) broadcastable to complex coeffs [B,C,6,H,W]."""
+        h, w = spatial_hw
+        level_scale = self.wavelet_level_amp_scales[level]
+        mag_amp = self.max_wavelet_mag_amp * level_scale
+        phase_amp = self.max_wavelet_phase_amp * level_scale
+
+        if self.wavelet_spatial_grid > 0:
+            raw_mag = self.raw_wavelet_mag_scale[:, :, level]  # [1, 6, g, g]
+            raw_ph = self.raw_wavelet_phase_shift[:, :, level]
+            raw_mag = F.interpolate(
+                raw_mag, size=(h, w), mode="bicubic", align_corners=False
+            )
+            raw_ph = F.interpolate(
+                raw_ph, size=(h, w), mode="bicubic", align_corners=False
+            )
+            # [1, 6, H, W] -> [1, 1, 6, H, W]
+            scale = 1.0 + mag_amp * torch.tanh(raw_mag).unsqueeze(1)
+            phase_shift = phase_amp * torch.tanh(raw_ph).unsqueeze(1)
+        elif self.wavelet_per_channel:
+            raw_mag = self.raw_wavelet_mag_scale[:, :, :, level]  # [1, 3, 6]
+            raw_ph = self.raw_wavelet_phase_shift[:, :, :, level]
+            scale = 1.0 + mag_amp * torch.tanh(raw_mag).unsqueeze(-1).unsqueeze(-1)
+            phase_shift = phase_amp * torch.tanh(raw_ph).unsqueeze(-1).unsqueeze(-1)
+        else:
+            raw_mag = self.raw_wavelet_mag_scale[:, :, level]  # [1, 6]
+            raw_ph = self.raw_wavelet_phase_shift[:, :, level]
+            scale = 1.0 + mag_amp * torch.tanh(raw_mag).view(1, 1, 6, 1, 1)
+            phase_shift = phase_amp * torch.tanh(raw_ph).view(1, 1, 6, 1, 1)
+
+        return scale, phase_shift
+
+    def _perturb_wavelet_coeffs_legacy(self, coeffs: torch.Tensor, level: int) -> torch.Tensor:
+        """Historical element-wise abs/angle on real/imag stack [B,C,6,H,W,2]."""
+        mag = torch.abs(coeffs)
+        phase = torch.angle(coeffs)
+        level_scale = self.wavelet_level_amp_scales[level]
+        mag_amp = self.max_wavelet_mag_amp * level_scale
+        phase_amp = self.max_wavelet_phase_amp * level_scale
+        scale = 1.0 + mag_amp * torch.tanh(
+            self.raw_wavelet_mag_scale[:, :, level].view(1, -1, 1, 1, 1)
+        )
+        phase_shift = phase_amp * torch.tanh(
+            self.raw_wavelet_phase_shift[:, :, level].view(1, -1, 1, 1, 1)
+        )
+        new_mag = mag * scale
+        new_phase = phase + phase_shift
+        return new_mag * torch.exp(1j * new_phase)
+
+    def _perturb_wavelet_coeffs_complex(self, coeffs: torch.Tensor, level: int) -> torch.Tensor:
+        """Polar mag/phase on true complex coeffs; returns real/imag stack for inverse."""
+        # pytorch-wavelets: [B, C, 6, H, W, 2]
+        c = torch.view_as_complex(coeffs.contiguous())
+        mag = torch.abs(c)
+        phase = torch.angle(c)
+        scale, phase_shift = self._wavelet_level_modulators(level, (c.shape[-2], c.shape[-1]))
+        new_c = (mag * scale) * torch.exp(1j * (phase + phase_shift))
+        return torch.view_as_real(new_c)
+
     def forward(self, x: torch.Tensor, face_mask: torch.Tensor | None = None) -> torch.Tensor:
         b = x.shape[0]
         device = x.device
@@ -242,46 +389,29 @@ class LightweightDeIdentifier(nn.Module):
         if face_mask is None:
             face_mask = self.get_face_mask(b, device)
 
-        # CÓDIGO ANTERIOR:
-        # dct_delta = self.reconstruct_dct_delta(b, device)
-        # photo_delta = self.reconstruct_photo_delta(b, device)
-        # flow = self.reconstruct_flow(b, device)
-        #
-        # y = x + dct_delta
-        # y = y.clamp(0.0, 1.0)
-        #
-        # y = self.warp(y, flow)
-        #
-        # y = y + photo_delta
-        # y = y.clamp(0.0, 1.0)
-
         y = x
 
         # Transformada espectral (DCT ou Wavelet)
         if not self.disable_dct:
-            if self.transform_type == 'dct':
+            if self.transform_type == "dct":
                 dct_delta = self.reconstruct_dct_delta(b, device, face_mask)
                 y = y + dct_delta
                 y = y.clamp(0.0, 1.0)
-            elif self.transform_type == 'dtcwt':
-                Yl, Yh = self.wavelet(x)   # Yl: aproximação, Yh: lista de detalhes por nível
+            elif self.transform_type == "dtcwt":
+                Yl, Yh = self.wavelet(x)
+                if self.wavelet_yl_gain and self.raw_wavelet_yl_gain is not None:
+                    yl_scale = 1.0 + self.max_wavelet_yl_amp * torch.tanh(
+                        self.raw_wavelet_yl_gain
+                    )
+                    Yl = Yl * yl_scale
+
                 Yh_perturbed = []
                 for level, coeffs in enumerate(Yh):
-                    # coeffs: [B, 6, C, H_l, W_l] (complexo)
-                    mag = torch.abs(coeffs)
-                    phase = torch.angle(coeffs)
-
-                    # Parâmetros para este nível e orientação (broadcast)
-                    scale = 1.0 + self.max_wavelet_amp * torch.tanh(
-                        self.raw_wavelet_mag_scale[:, :, level].view(1, -1, 1, 1, 1)
-                    )
-                    phase_shift = self.max_wavelet_amp * torch.tanh(
-                        self.raw_wavelet_phase_shift[:, :, level].view(1, -1, 1, 1, 1)
-                    )
-
-                    new_mag = mag * scale
-                    new_phase = phase + phase_shift
-                    new_coeffs = new_mag * torch.exp(1j * new_phase)
+                    # coeffs: [B, C, 6, H_l, W_l, 2] (real/imag)
+                    if self.wavelet_polar_mode == "legacy":
+                        new_coeffs = self._perturb_wavelet_coeffs_legacy(coeffs, level)
+                    else:
+                        new_coeffs = self._perturb_wavelet_coeffs_complex(coeffs, level)
                     Yh_perturbed.append(new_coeffs)
 
                 y_wavelet = self.wavelet.inverse(Yl, Yh_perturbed)
@@ -318,18 +448,28 @@ class LightweightDeIdentifier(nn.Module):
             "photo_l2": photo_l2,
         }
 
-        if self.transform_type == 'dct':
+        if self.transform_type == "dct":
             reg["dct_l2"] = (torch.tanh(self.raw_dct) ** 2).mean()
-        elif self.transform_type == 'dtcwt' and self.raw_wavelet_mag_scale is not None:
+        elif self.transform_type == "dtcwt" and self.raw_wavelet_mag_scale is not None:
             mag_l2 = (torch.tanh(self.raw_wavelet_mag_scale) ** 2).mean()
             phase_l2 = (torch.tanh(self.raw_wavelet_phase_shift) ** 2).mean()
 
             reg["wavelet_mag_l2"] = mag_l2
             reg["wavelet_phase_l2"] = phase_l2
-            
-            # Suavidade entre níveis
-            smooth_mag = (self.raw_wavelet_mag_scale[:, :, 1:] - self.raw_wavelet_mag_scale[:, :, :-1]).abs().mean()
-            
+
+            raw = self.raw_wavelet_mag_scale
+            if raw.dim() == 3:
+                smooth_mag = (raw[:, :, 1:] - raw[:, :, :-1]).abs().mean()
+            elif raw.dim() == 4:
+                smooth_mag = (raw[:, :, :, 1:] - raw[:, :, :, :-1]).abs().mean()
+            elif raw.dim() == 5:
+                smooth_mag = (raw[:, :, 1:] - raw[:, :, :-1]).abs().mean()
+            else:
+                smooth_mag = raw.new_zeros(())
+
             reg["wavelet_mag_smooth"] = smooth_mag
+
+            if self.raw_wavelet_yl_gain is not None:
+                reg["wavelet_yl_l2"] = (torch.tanh(self.raw_wavelet_yl_gain) ** 2).mean()
 
         return reg

@@ -23,7 +23,13 @@ for _module in (_dtcwt_lowlevel, _dtcwt_transform_funcs):
             setattr(_module, _name, _patch_complex_filters(getattr(_module, _name)))
 
 
-class DTCWTUndecimated(nn.Module):
+class DTCWTDecimated(nn.Module):
+    """Critically sampled (decimated) 2D DT-CWT via pytorch-wavelets.
+
+    Each decomposition level halves the spatial resolution of the detail
+    coefficients; this is *not* an undecimated / stationary wavelet transform.
+    """
+
     def __init__(self, J=3, biort='near_sym_a', qshift='qshift_a'):
         super().__init__()
         self.J = J

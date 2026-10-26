@@ -16,16 +16,16 @@ Treinamento é auto-supervisionado: usa apenas as imagens de face (sem labels), 
 
 ## Estrutura (não mover/renomear sem atualizar este arquivo)
 - `deid_optimize.py` — CLI (subcomandos: train, apply, evaluate, evaluate-single)
-- `models/transformer.py` — LightweightDeIdentifier (classe central)
+- `models/transformer.py` — LightweightDeIdentifier (classe central; DT-CWT polar `complex|legacy`, amps mag/phase, per-channel / spatial / Yl)
 - `models/embedders.py` — FaceNetEmbedder, load_authorized_embedders
-- `models/wavelet_transform.py` — implementação DT-CWT
+- `models/wavelet_transform.py` — DT-CWT decimated (`DTCWTDecimated`)
 - `losses/losses.py` — identity_loss_ensemble, SSIM, TV, L2
 - `training/trainer.py` — loop de treinamento
 - `evaluation/evaluate.py` e `evaluate_single.py` — avaliação resumida vs detalhada
 - `inference/apply.py` — aplicação em lote
 - `utils/` — checkpoint, scheduler (WarmupScheduler), helpers
-- `notebooks/` — exploração e figuras para a dissertação (não lógica canônica)
-- `scripts/` - scripts utilizados para treinamento e avalição de modelos
+- `notebooks/` — exploração e figuras para a dissertação (não lógica canônica); `wavelet_polar_debug.ipynb` para a linha freq-only
+- `scripts/` - scripts utilizados para treinamento e avalição de modelos (`run_wavelet_*` / `compare_wavelet_*` isolam frequência)
 
 ## Métricas-chave (não inventar outras sem justificar)
 - `cos`: similaridade cosseno média de embeddings (queremos baixo, perto de --target-cos)

@@ -90,7 +90,16 @@ def validate_train_args(args) -> None:
     validate_mask_args(args)
     if getattr(args, "early_stopping", False) and not getattr(args, "val_data", None):
         raise ValueError("--val-data é obrigatório quando --early-stopping está ativo.")
-
+    if getattr(args, "wavelet_per_channel", False) and int(getattr(args, "wavelet_spatial_grid", 0) or 0) > 0:
+        raise ValueError("--wavelet-per-channel e --wavelet-spatial-grid>0 são mutuamente exclusivos.")
+    if getattr(args, "wavelet_polar_mode", "complex") == "legacy" and (
+        getattr(args, "wavelet_per_channel", False)
+        or int(getattr(args, "wavelet_spatial_grid", 0) or 0) > 0
+        or getattr(args, "wavelet_yl_gain", False)
+    ):
+        raise ValueError(
+            "--wavelet-polar-mode legacy não combina com per-channel / spatial-grid / yl-gain."
+        )
 def build_parser():
     parser = argparse.ArgumentParser(
         description="Otimização de transformação leve para desidentificação facial autorizada."
@@ -183,10 +192,57 @@ def build_parser():
 
     p_train.add_argument("--transform-type", default="dct", choices=["dct", "dtcwt"])
     p_train.add_argument("--wavelet-J", type=int, default=3)
-    p_train.add_argument("--max-wavelet-amp", type=float, default=0.2)
+    p_train.add_argument(
+        "--max-wavelet-amp",
+        type=float,
+        default=0.2,
+        help="Fallback amp for mag/phase when --max-wavelet-mag/phase-amp omitted.",
+    )
+    p_train.add_argument(
+        "--max-wavelet-mag-amp",
+        type=float,
+        default=None,
+        help="Max relative magnitude scale (default: --max-wavelet-amp).",
+    )
+    p_train.add_argument(
+        "--max-wavelet-phase-amp",
+        type=float,
+        default=None,
+        help="Max phase shift in radians (default: --max-wavelet-amp).",
+    )
+    p_train.add_argument(
+        "--wavelet-level-amp-scales",
+        type=str,
+        default=None,
+        help="Comma-separated per-level multipliers, length=J (default: 1,1,...,1).",
+    )
+    p_train.add_argument(
+        "--wavelet-polar-mode",
+        default="complex",
+        choices=["complex", "legacy"],
+        help="complex=true polar on DT-CWT coeffs; legacy=pre-fix element-wise abs/angle.",
+    )
+    p_train.add_argument(
+        "--wavelet-per-channel",
+        action="store_true",
+        help="Learn mag/phase per RGB channel (shape 1,3,6,J). Mutually exclusive with spatial grid.",
+    )
+    p_train.add_argument(
+        "--wavelet-spatial-grid",
+        type=int,
+        default=0,
+        help="If >0, low-res spatial mag/phase maps of size g×g (default 0=disabled).",
+    )
+    p_train.add_argument(
+        "--wavelet-yl-gain",
+        action="store_true",
+        help="Enable learnable gain on DT-CWT approximation coefficients Yl.",
+    )
+    p_train.add_argument("--max-wavelet-yl-amp", type=float, default=0.05)
     p_train.add_argument("--lambda-wavelet-mag", type=float, default=0.01)
     p_train.add_argument("--lambda-wavelet-phase", type=float, default=0.01)
     p_train.add_argument("--lambda-wavelet-smooth", type=float, default=0.001)
+    p_train.add_argument("--lambda-wavelet-yl", type=float, default=0.01)
 
     p_train.add_argument("--lr-scheduler", type=str, default="none",
                      choices=["none", "cosine", "step", "onecycle"],

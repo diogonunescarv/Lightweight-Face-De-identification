@@ -100,6 +100,13 @@ def train(args, *, val_callback=None):
             "(usa elipse centrada original)."
         )
 
+    mag_amp = getattr(args, "max_wavelet_mag_amp", None)
+    phase_amp = getattr(args, "max_wavelet_phase_amp", None)
+    if mag_amp is None:
+        mag_amp = args.max_wavelet_amp
+    if phase_amp is None:
+        phase_amp = args.max_wavelet_amp
+
     transformer = LightweightDeIdentifier(
         image_size=args.image_size,
         transform_type=args.transform_type,
@@ -108,6 +115,14 @@ def train(args, *, val_callback=None):
         dct_fmax=args.dct_fmax,
         wavelet_J=args.wavelet_J,
         max_wavelet_amp=args.max_wavelet_amp,
+        max_wavelet_mag_amp=mag_amp,
+        max_wavelet_phase_amp=phase_amp,
+        wavelet_level_amp_scales=getattr(args, "wavelet_level_amp_scales", None),
+        wavelet_polar_mode=getattr(args, "wavelet_polar_mode", "complex"),
+        wavelet_per_channel=bool(getattr(args, "wavelet_per_channel", False)),
+        wavelet_spatial_grid=int(getattr(args, "wavelet_spatial_grid", 0)),
+        wavelet_yl_gain=bool(getattr(args, "wavelet_yl_gain", False)),
+        max_wavelet_yl_amp=float(getattr(args, "max_wavelet_yl_amp", 0.05)),
         flow_grid=args.flow_grid,
         photo_grid=args.photo_grid,
         max_dct_amp=args.max_dct_amp,
@@ -240,6 +255,10 @@ def train(args, *, val_callback=None):
                 loss += args.lambda_wavelet_mag * regs.get("wavelet_mag_l2", 0.0)
                 loss += args.lambda_wavelet_phase * regs.get("wavelet_phase_l2", 0.0)
                 loss += args.lambda_wavelet_smooth * regs.get("wavelet_mag_smooth", 0.0)
+                if getattr(args, "wavelet_yl_gain", False):
+                    loss += getattr(args, "lambda_wavelet_yl", 0.01) * regs.get(
+                        "wavelet_yl_l2", 0.0
+                    )
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -430,6 +449,14 @@ def save_checkpoint(
         "transform_type": transformer.transform_type,
         "wavelet_J": transformer.wavelet_J,
         "max_wavelet_amp": transformer.max_wavelet_amp,
+        "max_wavelet_mag_amp": transformer.max_wavelet_mag_amp,
+        "max_wavelet_phase_amp": transformer.max_wavelet_phase_amp,
+        "wavelet_level_amp_scales": list(transformer.wavelet_level_amp_scales),
+        "wavelet_polar_mode": transformer.wavelet_polar_mode,
+        "wavelet_per_channel": transformer.wavelet_per_channel,
+        "wavelet_spatial_grid": transformer.wavelet_spatial_grid,
+        "wavelet_yl_gain": transformer.wavelet_yl_gain,
+        "max_wavelet_yl_amp": transformer.max_wavelet_yl_amp,
         "state_dict": transformer.state_dict(),
         "disable_dct": args.disable_dct,
         "disable_flow": args.disable_flow,
