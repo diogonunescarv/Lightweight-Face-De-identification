@@ -42,15 +42,20 @@ else
   echo "[setup-fr] Código já presente → ${DEST}"
 fi
 
-# gdown necessário para download on-demand dos .pth
+# Deps do bridge FR (gdown para pesos; einops para ViT em FR_DB)
 python - <<'PY'
 import importlib.util
 import subprocess
 import sys
-if importlib.util.find_spec("gdown") is None:
-    print("[setup-fr] instalando gdown…")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "gdown"])
-print("[setup-fr] gdown OK")
+
+needed = []
+for pkg, mod in (("gdown", "gdown"), ("einops", "einops")):
+    if importlib.util.find_spec(mod) is None:
+        needed.append(pkg)
+if needed:
+    print(f"[setup-fr] instalando: {', '.join(needed)}")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", *needed])
+print("[setup-fr] deps OK (gdown, einops)")
 PY
 
 export PROTEGO_FR_ROOT="${DEST}"
