@@ -179,12 +179,40 @@ def evaluate_v2(
     ssim_all: list[float] = []
     lpips_all: list[float] = []
     times_ms: list[float] = []
+    times_e2e_ms: list[float] = []
+
+    # One warmup batch (not timed) so CUDA/kernels settle before latency stats.
+    warmed = False
 
     for batch in loader:
         x, batch_paths, _hw = batch
         x = x.to(device_t)
         batch_paths = list(batch_paths)
+        n_b = max(x.shape[0], 1)
 
+        if not warmed:
+            landmarks_batch = None
+            if need_lm and landmark_detector is not None:
+                landmarks_batch = detect_landmarks_batch(batch_paths, landmark_detector)
+            face_mask = resolve_face_mask_by_size(
+                x.shape[0],
+                batch_paths,
+                device_t,
+                image_size=image_size,
+                use_face_mask=use_face_mask,
+                mask_mode=mode,
+                mask_regions=regions,
+                mask_shape=shape,
+                detector=landmark_detector,
+                landmarks_batch=landmarks_batch,
+            )
+            _ = module(x, face_mask=face_mask, roi_compose=roi)
+            if device_t.type == "cuda":
+                torch.cuda.synchronize()
+            warmed = True
+            # Fall through and time this batch normally (warmup only primes kernels).
+
+        t_e2e0 = time.perf_counter()
         landmarks_batch = None
         if need_lm and landmark_detector is not None:
             landmarks_batch = detect_landmarks_batch(batch_paths, landmark_detector)
@@ -202,9 +230,14 @@ def evaluate_v2(
             landmarks_batch=landmarks_batch,
         )
 
+        if device_t.type == "cuda":
+            torch.cuda.synchronize()
         t0 = time.perf_counter()
         x_prot = module(x, face_mask=face_mask, roi_compose=roi)
-        dt = (time.perf_counter() - t0) * 1000.0 / max(x.shape[0], 1)
+        if device_t.type == "cuda":
+            torch.cuda.synchronize()
+        dt = (time.perf_counter() - t0) * 1000.0 / n_b
+        dt_e2e = (time.perf_counter() - t_e2e0) * 1000.0 / n_b
 
         ssim_mask = resolve_ssim_mask_by_size(
             batch_paths,
@@ -245,6 +278,7 @@ def evaluate_v2(
                 "euclid": euclid_i,
                 "ssim": ssim_i,
                 "time_ms": dt,
+                "time_ms_e2e": dt_e2e,
                 "roi_compose": roi,
                 "image_size": image_size,
             }
@@ -255,6 +289,7 @@ def evaluate_v2(
             cos_all.append(cos_i)
             ssim_all.append(ssim_i)
             times_ms.append(dt)
+            times_e2e_ms.append(dt_e2e)
 
     def _mean(xs: list[float]) -> float:
         return float(sum(xs) / len(xs)) if xs else float("nan")
@@ -265,6 +300,7 @@ def evaluate_v2(
         "euclid_mean": math.sqrt(2.0 * max(0.0, 1.0 - _mean(cos_all))) if cos_all else float("nan"),
         "ssim_mean": _mean(ssim_all),
         "time_ms_mean": _mean(times_ms),
+        "time_ms_e2e_mean": _mean(times_e2e_ms),
         "lpips_mean": _mean(lpips_all) if lpips_all else None,
         "lpips_available": lpips_net is not None,
         "roi_compose": roi,
@@ -286,6 +322,7 @@ def evaluate_v2(
         "euclid",
         "ssim",
         "time_ms",
+        "time_ms_e2e",
         "roi_compose",
         "image_size",
     ]
@@ -300,6 +337,8 @@ def evaluate_v2(
     print(
         f"[evaluate-v2] n={summary['n_images']} cos={summary['cos_mean']:.4f} "
         f"ssim={summary['ssim_mean']:.4f} lpips={summary['lpips_mean']} "
-        f"roi={roi} → {eval_dir}"
+        f"time_ms={summary['time_ms_mean']:.2f} "
+        f"time_e2e_ms={summary['time_ms_e2e_mean']:.2f} "
+        f"roi={roi} mask={mode}/{shape} → {eval_dir}"
     )
     return summary

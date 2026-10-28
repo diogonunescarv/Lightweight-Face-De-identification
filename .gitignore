@@ -32,6 +32,7 @@ eval_metrics.csv
 data/raw/
 data/cache/
 
-# Optional Protego FR_DB (weights / vendored code — never commit)
-third_party/protego_fr/
+# Protego FR local (código + pesos baixados — NUNCA commit)
+third_party/
 FR_DB/
+**/FR_DB/**/pretrained/

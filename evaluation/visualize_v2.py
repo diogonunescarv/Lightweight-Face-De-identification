@@ -18,6 +18,7 @@ from PIL import Image
 from evaluation.evaluate_v2 import load_meta_mask_from_checkpoint
 from models.dtcwt_meta_mask import ROI_COMPOSE_PIXEL, ROI_COMPOSE_WAVELET
 from models.masks import (
+    detect_landmarks_batch,
     parse_mask_regions,
     parse_mask_shape,
     resolve_face_mask_by_size,
@@ -108,16 +109,33 @@ def render_meta_mask_panel(
     paths_list = [str(Path(image_path).resolve())]
 
     use_face_mask = not no_face_mask and bool(meta.get("use_face_mask", True))
-    mm = mask_mode or meta.get("mask_mode") or "fixed"
-    # Detectors may be unavailable in smoke; prefer fixed ellipse for viz.
-    if mm == "landmarks":
-        mm = "fixed"
+    mm = str(mask_mode or meta.get("mask_mode") or "landmarks")
     ms = parse_mask_shape(mask_shape or meta.get("mask_shape") or "ellipse")
+    raw_regions = meta.get("mask_regions") or ["full"]
     mr = parse_mask_regions(
         mask_regions
         if mask_regions is not None
-        else ",".join(meta.get("mask_regions") or ["full"])
+        else (",".join(raw_regions) if isinstance(raw_regions, list) else str(raw_regions))
     )
+
+    # Universal meta-mask ∘ per-image landmarks (same contract as train/eval).
+    landmark_detector = None
+    landmarks_batch = None
+    if use_face_mask and mm == "landmarks":
+        try:
+            from models.face_detector import get_default_detector
+
+            landmark_detector = get_default_detector()
+            landmarks_batch = detect_landmarks_batch(paths_list, landmark_detector)
+        except Exception as exc:
+            print(
+                f"[visualize_v2] landmarks unavailable ({exc}); "
+                "falling back to fixed ellipse"
+            )
+            mm = "fixed"
+            landmark_detector = None
+            landmarks_batch = None
+
     face_mask = resolve_face_mask_by_size(
         1,
         paths_list,
@@ -126,7 +144,9 @@ def render_meta_mask_panel(
         use_face_mask=use_face_mask,
         mask_mode=mm,
         mask_regions=mr,
-        mask_shape=ms if ms != "band" else "ellipse",
+        mask_shape=ms,
+        detector=landmark_detector,
+        landmarks_batch=landmarks_batch,
     ).to(device)
 
     prefix = stem or Path(image_path).stem
@@ -205,6 +225,10 @@ def render_meta_mask_panel(
         "composes_rendered": composes,
         "files": saved,
         "image_size": image_size,
+        "mask_mode": mm,
+        "mask_shape": ms,
+        "mask_regions": list(mr),
+        "use_face_mask": use_face_mask,
     }
     (out / f"{prefix}_manifest.json").write_text(
         __import__("json").dumps(manifest, indent=2), encoding="utf-8"

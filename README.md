@@ -38,15 +38,21 @@ bash scripts/run_v2_train_small.sh          # campeão: protego + FR small + --r
 bash scripts/run_v2_train_wavelet.sh        # Ideia 2: --roi-compose wavelet
 bash scripts/run_v2_train_full.sh           # ensemble full (VRAM alto)
 
+# Ablação full×hybrid × pixel×wavelet (tmux; defaults no script):
+bash scripts/run_v2_ablation_mask_roi.sh
+# Ablação níveis DT-CWT (base=full; 1|2|3|pares|1,2,3 × pixel/wavelet):
+bash scripts/run_v2_ablation_levels.sh
+# só eval: SKIP_TRAIN=1 bash scripts/run_v2_ablation_levels.sh
+
 python deid_optimize.py evaluate-v2 \
   --checkpoint /path/to/run/meta_mask_best.pt \
-  --data /path/to/faces --max-samples 16 --no-lpips   # → <run>/eval/
+  --data /path/to/faces --max-samples 16 --no-lpips   # → <run>/eval/ (+ time_ms*)
 
 python scripts/run_v2_visualize_meta_mask.py \
-  --checkpoint /path/to/run/meta_mask.pt --image face.jpg   # → <run>/viz/
+  --checkpoint /path/to/run/meta_mask.pt --image face.jpg   # → <run>/viz/ (landmarks)
 ```
 
-Smoke sem FR_DB: acrescente `--smoke-fr` (FaceNets built-in). Produção `small`/`full`: `PROTEGO_FR_ROOT` ou `third_party/protego_fr/`.
+FR de produção: `third_party/protego_fr/` (gitignored; `bash scripts/run_v2_setup_protego_fr.sh` baixa código + pesos via gdown). Smoke: `--smoke-fr` (FaceNets built-in).
 
 ### `--roi-compose` (Ideia 1 vs 2)
 

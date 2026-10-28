@@ -11,6 +11,25 @@ Formato sugerido por entrada:
 
 ---
 
+## 2026-10-28 — Ablação V2: níveis DT-CWT (base = melhor máscara full)
+Contexto: 1ª bateria mostrou **full+pixel** (cos≈0.447) e **full+wavelet** (cos≈0.467) melhores que hybrid; fixar essa máscara e varrer `--editable-levels`.
+Decisão:
+- Script `scripts/run_v2_ablation_levels.sh`: máscara `landmarks/ellipse/full`; combinações `1` | `2` | `3` | `1,2` | `1,3` | `2,3` | `1,2,3` × `pixel`/`wavelet` (14 configs).
+- `2,3` **reutiliza** `v2_abl_full_pixel` / `v2_abl_full_wavelet` (`REUSE_LV23=1`); nível 1 emite warning JPEG (já no módulo).
+- Eval igual à 1ª bateria (holdout + FR mix); notebook `notebooks/v2_ablation_levels_visualize.ipynb` (diff, histos por FR, heatmap níveis×ideia).
+Resultado: **a validar após treinos** → `v2_ablation_levels_summary.csv`.
+
+## 2026-10-27 — Ablação V2: full vs hybrid × pixel vs wavelet (+ latência)
+Contexto: comparar ROIs com SignSGD, níveis 2–3, FR `small`; Ideia 1 vs 2; eval em holdout LFW+CelebA.
+Decisão:
+- Grade de 4 runs (`scripts/run_v2_ablation_mask_roi.sh`): `full`×`pixel`, `hybrid`×`pixel`, `full`×`wavelet`, `hybrid`×`wavelet`.
+- Hybrid = `--mask-shape band --mask-regions eyes-nose-mouth-hybrid` (band olhos+nariz, elipse boca) — não `eyes-nose-mouth` band puro.
+- Inferência/eval/viz: meta-máscara **universal** ∘ \(M(\mathrm{landmarks})\) por imagem (`visualize_v2` deixa de forçar fixed/ellipse).
+- Eval FR: `inception_facenet_vgg,inception_facenet_casia,ir50_arcface_casia` (2 held-out + 1 do treino). Holdout flat via `scripts/materialize_v2_holdout.py`.
+- Latência em `evaluate-v2`: `time_ms_mean` (só forward) + `time_ms_e2e_mean` (landmarks + máscara + forward); warmup 1 batch.
+- Notebook local: `notebooks/v2_ablation_mask_roi_visualize.ipynb` (seções separadas Ideia 1 / Ideia 2).
+Resultado: **métricas a preencher após treinos no terminal do usuário** (CSV `$OUT_ROOT/v2_ablation_mask_roi_summary.csv`).
+
 ## 2026-10-26 — V2 Step 9: cleanup, docs finais, viz, V2.1
 Contexto: fechar a V2 como **treinável** (Ideias 1 e 2); repo enxuto; sem treinos longos neste step.
 Decisão:
@@ -22,9 +41,10 @@ Decisão:
   | Ablação | Comando / flags | Hipótese |
   |---------|-----------------|----------|
   | ROI `full` (default) | `--mask-regions full --mask-shape ellipse` | melhor desID (lição V1) |
-  | ROI `band` | `--mask-shape band --mask-regions eyes-nose-mouth` | pode falhar desID (parcial) |
+  | ROI `hybrid` mid-face | `--mask-shape band --mask-regions eyes-nose-mouth-hybrid` | parcial com boca elipse |
+  | ROI `band` (puro) | `--mask-shape band --mask-regions eyes-nose-mouth` | pode falhar desID (parcial) |
   | Sem ROI | `--no-face-mask` | paridade pixel≈wavelet; baseline irmão |
-  | Ideia 1 vs 2 | `run_v2_train_small.sh` vs `run_v2_train_wavelet.sh` (mesmos seeds) | comparar cos/SSIM |
+  | Ideia 1 vs 2 | `run_v2_ablation_mask_roi.sh` (grade 2×2) | comparar cos/SSIM/latência |
   | Ensemble | `run_v2_train_full.sh` | cos↓ vs `small`; VRAM↑ |
 
 - **V2.1 (não implementar agora):** warm-start + 1–5 steps online; Phase 5 LPIPS batch; dispersão-K/Gram. API pronta: `forward(x, face_mask, roi_compose=...)`.

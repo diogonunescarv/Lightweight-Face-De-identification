@@ -9,6 +9,11 @@ if [[ -f "${ROOT}/.venv/bin/activate" ]]; then
   source "${ROOT}/.venv/bin/activate"
 fi
 
+if [[ "${SKIP_FR_SETUP:-0}" != "1" ]] && [[ "$*" != *"--smoke-fr"* ]]; then
+  bash "${ROOT}/scripts/run_v2_setup_protego_fr.sh"
+  export PROTEGO_FR_ROOT="${PROTEGO_FR_ROOT:-${ROOT}/third_party/protego_fr}"
+fi
+
 OUT_ROOT="${OUT_ROOT:-/mnt/study-data/dcarvalho/tests}"
 DEVICE="${DEVICE:-cuda:0}"
 EXP_NAME="${EXP_NAME:-merged_p33_protego_wavelet}"

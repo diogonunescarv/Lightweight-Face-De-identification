@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# V2 treino com ensemble FULL (~9 FRs). VRAM alto — use offload (já default no trainer)
-# e batch_size=2. Requer PROTEGO_FR_ROOT com FR_DB completo.
+# V2 treino com ensemble FULL (~9 FRs). VRAM alto — offload no trainer; batch_size=2.
+# FR local: third_party/protego_fr (setup; gitignored). Pesos full baixam on-demand no load.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -8,6 +8,12 @@ export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
 if [[ -f "${ROOT}/.venv/bin/activate" ]]; then
   # shellcheck disable=SC1091
   source "${ROOT}/.venv/bin/activate"
+fi
+
+if [[ "${SKIP_FR_SETUP:-0}" != "1" ]]; then
+  # Prefetch só o small no setup; full completa pesos ao carregar cada FR.
+  PREFETCH_FR="${PREFETCH_FR:-1}" bash "${ROOT}/scripts/run_v2_setup_protego_fr.sh"
+  export PROTEGO_FR_ROOT="${PROTEGO_FR_ROOT:-${ROOT}/third_party/protego_fr}"
 fi
 
 OUT_ROOT="${OUT_ROOT:-/mnt/study-data/dcarvalho/tests}"
