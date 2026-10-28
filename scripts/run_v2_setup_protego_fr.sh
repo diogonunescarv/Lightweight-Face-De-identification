@@ -42,6 +42,25 @@ else
   echo "[setup-fr] Código já presente → ${DEST}"
 fi
 
+# Remove import morto de debug do irmão (evita depender de IPython só por isso).
+python - <<PY
+from pathlib import Path
+root = Path("${DEST}") / "FR_DB"
+n = 0
+for p in root.rglob("*.py"):
+    text = p.read_text(encoding="utf-8")
+    if "from IPython import embed" not in text:
+        continue
+    p.write_text(
+        text.replace("from IPython import embed\n", "").replace(
+            "from IPython import embed\r\n", ""
+        ),
+        encoding="utf-8",
+    )
+    n += 1
+print(f"[setup-fr] removed IPython embed import from {n} file(s)")
+PY
+
 # Deps do bridge FR (gdown para pesos; einops para ViT em FR_DB)
 python - <<'PY'
 import importlib.util
